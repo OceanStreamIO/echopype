@@ -1,13 +1,20 @@
 """
 Functions for enhancing the spatial and temporal coherence of data.
 """
+from typing import Union
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
 from .mvbs import get_MVBS_along_channels
-
+from .nasc import (
+    check_identical_depth,
+    get_depth_bin_info,
+    get_dist_bin_info,
+    get_distance_from_latlon,
+)
 
 def _set_var_attrs(da, long_name, units, round_digits, standard_name=None):
     """
