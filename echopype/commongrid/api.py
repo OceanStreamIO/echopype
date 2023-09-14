@@ -1,20 +1,12 @@
 """
 Functions for enhancing the spatial and temporal coherence of data.
 """
-from typing import Union
-
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
 from .mvbs import get_MVBS_along_channels
-from .nasc import (
-    check_identical_depth,
-    get_depth_bin_info,
-    get_dist_bin_info,
-    get_distance_from_latlon,
-)
 
 
 def _set_var_attrs(da, long_name, units, round_digits, standard_name=None):
@@ -254,7 +246,7 @@ def compute_MVBS_index_binning(ds_Sv, range_sample_num=100, ping_num=100):
 
     return ds_MVBS
 
-
+  
 def compute_NASC(
     ds_Sv: xr.Dataset,
     cell_dist: Union[int, float],  # TODO: allow xr.DataArray

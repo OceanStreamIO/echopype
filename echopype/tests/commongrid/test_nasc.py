@@ -30,7 +30,6 @@ def test_compute_NASC(ek60_path):
     da_NASC = ds_NASC["NASC"]
     decimal_places = 5
     tolerance = 10 ** (-decimal_places)
-    da_NASC = ds_NASC["NASC"]
     nasc_min = da_NASC.min()
     nasc_max = da_NASC.max()
 
