@@ -3,7 +3,6 @@ Functions for reducing variabilities in backscatter data.
 """
 import pathlib
 from typing import List, Optional, Tuple, Union
-
 import numpy as np
 import xarray as xr
 
@@ -86,6 +85,7 @@ def remove_noise(ds_Sv, ping_num, range_sample_num, noise_max=None, SNR_threshol
     ds_Sv = insert_input_processing_level(ds_Sv, input_ds=ds_Sv)
 
     return ds_Sv
+
 
 
 def get_transient_noise_mask(
@@ -218,6 +218,7 @@ def get_impulse_noise_mask(
     return noise_free_mask
   
   
+
 def get_attenuation_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     desired_channel: str,
