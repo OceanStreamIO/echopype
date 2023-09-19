@@ -17,8 +17,8 @@ from echopype.mask.seabed import (
 
 from ..utils.io import validate_source_ds_da
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
-from .shoal import _weill as shoal_weill
 from .freq_diff import _check_freq_diff_source_Sv, _parse_freq_diff_eq
+from .shoal import _weill as shoal_weill
 
 # lookup table with key string operator and value as corresponding Python operator
 str2ops = {
@@ -521,11 +521,10 @@ def frequency_differencing(
     )
 
     da = da.assign_attrs({**mask_attrs, **{"history": history_attr}})
-
     return da
-  
-  
- def get_shoal_mask(
+
+
+def get_shoal_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     desired_channel: str,
     mask_type: str = "will",
@@ -581,9 +580,9 @@ def frequency_differencing(
         coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
     )
     return return_mask, return_mask_
-  
-  
-  def get_seabed_mask(
+
+
+def get_seabed_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     desired_channel: str,
     mask_type: str = "ariza",
