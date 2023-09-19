@@ -96,6 +96,12 @@ def complete_dataset_jr179(setup_test_data_jr179):
     Sv = _get_sv_dataset(setup_test_data_jr179, enriched=True, waveform="CW", encode="power")
     return Sv
 
+  
+@pytest.fixture(scope="session")
+def raw_dataset_jr179(setup_test_data_jr179):
+    ed = _get_raw_dataset(setup_test_data_jr179)
+    return ed
+
 
 def _get_sv_dataset(file_path, enriched: bool = False, waveform: str = "CW", encode: str = "power"):
     ed = ep.open_raw(file_path, sonar_model="ek60")
@@ -114,3 +120,4 @@ def _get_raw_dataset(file_path):
 def raw_dataset_jr179(setup_test_data_jr179):
     ed = _get_raw_dataset(setup_test_data_jr179)
     return ed
+
