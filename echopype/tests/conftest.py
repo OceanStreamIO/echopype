@@ -54,6 +54,12 @@ def setup_test_data_jr161():
     return _setup_file(file_name)
 
 
+@pytest.fixture(scope="session")
+def setup_test_data_jr179():
+    file_name = "JR179-D20080410-T150637.raw"
+    return _setup_file(file_name)
+
+
 def _setup_file(file_name):
     test_data_path = os.path.join(TEST_DATA_FOLDER, file_name)
     FTP_MAIN = "ftp://ftp.bas.ac.uk"
@@ -80,7 +86,35 @@ def sv_dataset_jr161(setup_test_data_jr161) -> xr.DataArray:
     return _get_sv_dataset(setup_test_data_jr161)
 
 
-def _get_sv_dataset(file_path):
+@pytest.fixture(scope="session")
+def sv_dataset_jr179(setup_test_data_jr179) -> xr.DataArray:
+    return _get_sv_dataset(setup_test_data_jr179)
+
+
+@pytest.fixture(scope="session")
+def complete_dataset_jr179(setup_test_data_jr179):
+    Sv = _get_sv_dataset(setup_test_data_jr179, enriched=True, waveform="CW", encode="power")
+    return Sv
+  
+@pytest.fixture(scope="session")
+def raw_dataset_jr179(setup_test_data_jr179):
+    ed = _get_raw_dataset(setup_test_data_jr179)
+    return ed
+
+
+def _get_sv_dataset(file_path, enriched: bool = False, waveform: str = "CW", encode: str = "power"):
     ed = ep.open_raw(file_path, sonar_model="ek60")
     Sv = ep.calibrate.compute_Sv(ed).compute()
+    if enriched is True:
+        Sv = ep.consolidate.add_splitbeam_angle(Sv, ed, waveform, encode)
     return Sv
+
+
+def _get_raw_dataset(file_path):
+    ed = ep.open_raw(file_path, sonar_model="ek60")
+    return ed
+
+
+
+
+
