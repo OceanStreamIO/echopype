@@ -188,10 +188,12 @@ def _check_var_name_fill_value(
             fill_value = fill_value.data.squeeze()  # squeeze out length=1 channel dimension
         elif isinstance(fill_value, np.ndarray):
             fill_value = fill_value.squeeze()  # squeeze out length=1 channel dimension
+        fill_has_channel = fill_value.ndim == 3
+        # here we either have a fill_value with multiple channels or a no-channel one
 
         source_ds_shape = (
             source_ds[var_name].isel(channel=0).shape
-            if "channel" in source_ds[var_name].coords
+            if "channel" in source_ds[var_name].coords and fill_has_channel is False
             else source_ds[var_name].shape
         )
 
@@ -274,7 +276,9 @@ def apply_mask(
         The mask(s) to be applied.
         Can be a single input or list that corresponds to a DataArray or a path.
         Each entry in the list must have dimensions ``('ping_time', 'range_sample')``.
-        Multi-channel masks are not currently supported.
+        If these are single-channel masks, the same mask will be applied to all
+        the channels in the dataset, whereas if they are multi-channel masks,
+        they will be applied to the matched channel
         If a path is provided this should point to a zarr or netcdf file with only
         one data variable in it.
         If the input ``mask`` is a list, a logical AND will be used to produce the final
@@ -325,8 +329,11 @@ def apply_mask(
 
     # Sanity check: final_mask should be of the same shape as source_ds[var_name]
     #               along the ping_time and range_sample dimensions
-    def get_ch_shape(da):
-        return da.isel(channel=0).shape if "channel" in da.dims else da.shape
+    def get_ch_shape(da, keep_channel=False):
+        if keep_channel is False and "channel" in da.dims:
+            return da.isel(channel=0).shape
+        else:
+            return da.shape
 
     # Below operate on the actual data array to be masked
     source_da = source_ds[var_name]
@@ -341,14 +348,16 @@ def apply_mask(
         )
 
     # final_mask is always an xr.DataArray with at most length=1 channel dimension
-    if "channel" in final_mask.dims:
-        final_mask = final_mask.isel(channel=0)
+    # if "channel" in final_mask.dims:
+    #    final_mask = final_mask.isel(channel=0)
 
+    # run if final_mask has no dimensions but channel does
     # Make sure fill_value and final_mask are expanded in dimensions
     if "channel" in source_da.dims:
-        if isinstance(fill_value, np.ndarray):
+        if "channel" not in final_mask.dims:
+            final_mask = np.array([final_mask.data] * source_da["channel"].size)
+        if isinstance(fill_value, np.ndarray) and fill_value.ndim == 2:
             fill_value = np.array([fill_value] * source_da["channel"].size)
-        final_mask = np.array([final_mask.data] * source_da["channel"].size)
 
     # Apply the mask to var_name
     # Somehow keep_attrs=True errors out here, so will attach later
