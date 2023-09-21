@@ -15,7 +15,7 @@ def _setup_file(file_name):
     FTP_MAIN = "ftp.bas.ac.uk"
     FTP_PARTIAL_PATH = "rapidkrill/ek60/"
     with FTP(FTP_MAIN) as ftp:
-        ftp.login()  # Add credentials if needed: ftp.login(user="username", passwd="password")
+        ftp.login()
         print(TEST_DATA_FOLDER)
         download_ftp_file(ftp, FTP_PARTIAL_PATH, file_name, TEST_DATA_FOLDER)
     return os.path.join(TEST_DATA_FOLDER, file_name)
