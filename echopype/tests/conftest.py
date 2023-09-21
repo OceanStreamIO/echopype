@@ -1,5 +1,6 @@
 """``pytest`` configuration."""
 
+from ftplib import FTP
 import os
 import subprocess
 import pytest
@@ -10,18 +11,34 @@ import echopype as ep
 from echopype.testing import TEST_DATA_FOLDER
 
 
-
 def _setup_file(file_name):
-    test_data_path = os.path.join(TEST_DATA_FOLDER, file_name)
-    FTP_MAIN = "ftp://ftp.bas.ac.uk"
-    FTP_PARTIAL_PATH = "/rapidkrill/ek60/"
-    if not os.path.exists(TEST_DATA_FOLDER):
-        os.mkdir(TEST_DATA_FOLDER)
-    if not os.path.exists(test_data_path):
-        ftp_file_path = FTP_MAIN + FTP_PARTIAL_PATH + file_name
-        subprocess.run(["wget", ftp_file_path, "-O", test_data_path])
+    FTP_MAIN = "ftp.bas.ac.uk"
+    FTP_PARTIAL_PATH = "rapidkrill/ek60/"
+    with FTP(FTP_MAIN) as ftp:
+        ftp.login()
+        print(TEST_DATA_FOLDER)
+        download_ftp_file(ftp, FTP_PARTIAL_PATH, file_name, TEST_DATA_FOLDER)
+    return os.path.join(TEST_DATA_FOLDER, file_name)
 
-    return test_data_path
+def download_ftp_file(ftp, remote_path, file_name, local_path):
+
+    # Construct the full paths
+    remote_file_path = os.path.join(remote_path, file_name)
+    local_file_path = os.path.join(local_path, file_name)
+
+    try:
+        # Ensure the local directory exists
+        os.makedirs(local_path, exist_ok=True)
+
+        # Check if the file already exists locally
+        if not os.path.exists(local_file_path):
+            with open(local_file_path, "wb") as local_file:
+                ftp.retrbinary("RETR " + remote_file_path, local_file.write)
+        else:
+            print(f"File {local_file_path} already exists. Skipping download.")
+
+    except Exception as e:
+        print(f"Error downloading {remote_file_path}. Error: {e}")
 
 
 def _get_sv_dataset(file_path, enriched: bool = False, waveform: str = "CW", encode: str = "power"):
