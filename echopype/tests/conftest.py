@@ -11,10 +11,6 @@ import echopype as ep
 from echopype.testing import TEST_DATA_FOLDER
 
 
-
-
-
-
 def _setup_file(file_name):
     FTP_MAIN = "ftp.bas.ac.uk"
     FTP_PARTIAL_PATH = "rapidkrill/ek60/"
@@ -43,8 +39,6 @@ def download_ftp_file(ftp, remote_path, file_name, local_path):
 
     except Exception as e:
         print(f"Error downloading {remote_file_path}. Error: {e}")
-
-
 
 
 def _get_sv_dataset(file_path, enriched: bool = False, waveform: str = "CW", encode: str = "power"):
