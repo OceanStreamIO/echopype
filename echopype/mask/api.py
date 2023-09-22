@@ -5,6 +5,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import xarray as xr
+from pandas import Index
 
 from echopype.mask.seabed import (
     _get_seabed_mask_ariza,
@@ -711,3 +712,116 @@ def get_seabed_mask(
         coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
     )
     return return_mask
+
+
+def create_multichannel_mask(masks: [xr.Dataset], channels: [str]) -> xr.Dataset:
+    """
+    Given a set of single-channel masks and a list of channels,
+    creates a multichannel mask
+
+    Parameters
+    ==========
+    masks(xr.Dataset): a list of single-channel masks
+    channels(str): a list of channel names
+
+    Returns
+    mask: a multi-channel mask
+    ======
+    """
+    if len(masks) != len(channels):
+        raise ValueError("number of masks and of channels provided should be the same")
+    for i in range(0, len(masks)):
+        mask = masks[i]
+        if "channel" in mask.coords:
+            masks[i] = mask.isel(channel=0)
+    result = xr.concat(
+        masks, Index(channels, name="channel"), data_vars="all", coords="all", join="exact"
+    )
+    return result
+
+
+def get_shoal_mask_multichannel(
+    source_Sv: Union[xr.Dataset, str, pathlib.Path],
+    mask_type: str = "will",
+    **kwargs,
+):
+    """
+    Wrapper function for (future) multiple shoal masking algorithms
+    (currently, only MOVIES-B (Will) is implemented)
+
+    Args:
+        source_Sv: xr.Dataset or str or pathlib.Path
+                    If a Dataset this value contains the Sv data to create a mask for,
+                    else it specifies the path to a zarr or netcdf file containing
+                    a Dataset. This input must correspond to a Dataset that has the
+                    coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
+        mask_type: string specifying the algorithm to use
+                    currently, 'weill' is the only one implemented
+
+    Returns
+    -------
+    mask: xr.DataArray
+        A DataArray containing the multichannel mask for the Sv data.
+        Regions satisfying the thresholding criteria are filled with ``True``,
+        else the regions are filled with ``False``.
+    mask_: xr.DataArray
+        A DataArray containing the multichannel mask for areas in which shoals were searched.
+        Edge regions are filled with 'False', whereas the portion
+        in which shoals could be detected is 'True'
+
+
+    Raises
+    ------
+    ValueError
+        If 'weill' is not given
+    """
+    channel_list = source_Sv["channel"].values
+    mask_list = []
+    _mask_list = []
+    for channel in channel_list:
+        mask, _mask = get_shoal_mask(source_Sv, channel, mask_type, **kwargs)
+        mask_list.append(mask)
+        _mask_list.append(_mask)
+    mask = create_multichannel_mask(mask_list, channel_list)
+    _mask = create_multichannel_mask(_mask_list, channel_list)
+    return mask, _mask
+
+
+def get_seabed_mask_multichannel(
+    source_Sv: Union[xr.Dataset, str, pathlib.Path],
+    mask_type: str = "ariza",
+    **kwargs,
+) -> xr.DataArray:
+    """
+    Create a mask based on the identified signal attenuations of Sv values.
+
+    Parameters
+    ----------
+    source_Sv: xr.Dataset or str or pathlib.Path
+        If a Dataset this value contains the Sv data to create a mask for,
+        else it specifies the path to a zarr or netcdf file containing
+        a Dataset. This input must correspond to a Dataset that has the
+        coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
+    mask_type: str with either "ariza", "experimental", "blackwell_mod",
+                                "blackwell", "deltaSv", "maxSv"
+                                based on the preferred method for signal attenuation mask generation
+    Returns
+    -------
+    xr.DataSet
+        A DataSet containing the multichannel mask for the Sv data.
+        Regions satisfying the thresholding criteria are filled with ``True``,
+        else the regions are filled with ``False``.
+
+    Raises
+    ------
+    ValueError
+        If neither "ariza", "experimental", "blackwell_mod",
+        "blackwell", "deltaSv", "maxSv" are given
+    """
+    channel_list = source_Sv["channel"].values
+    mask_list = []
+    for channel in channel_list:
+        mask = get_seabed_mask(source_Sv, channel, mask_type, **kwargs)
+        mask_list.append(mask)
+    mask = create_multichannel_mask(mask_list, channel_list)
+    return mask

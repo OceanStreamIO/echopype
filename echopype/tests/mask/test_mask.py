@@ -1013,3 +1013,16 @@ def test_channel_mask(var_name="var2"):
     check_mask = mask.values * 1
     compare = (t2 == check_mask).all()
     assert compare
+
+
+def test_shoal_mask_all(sv_dataset_jr161):
+    source_Sv = sv_dataset_jr161
+    ml, _ml = echopype.mask.api.get_shoal_mask_multichannel(source_Sv)
+    assert np.all(ml["channel"] == source_Sv["channel"])
+    assert np.all(_ml["channel"] == source_Sv["channel"])
+
+
+def test_seabed_mask_all(complete_dataset_jr179):
+    source_Sv = complete_dataset_jr179
+    ml = echopype.mask.api.get_seabed_mask_multichannel(source_Sv)
+    assert np.all(ml["channel"] == source_Sv["channel"])
