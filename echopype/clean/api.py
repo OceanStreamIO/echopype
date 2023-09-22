@@ -153,7 +153,7 @@ def get_transient_noise_mask(
 def get_impulse_noise_mask(
     source_Sv: xr.Dataset,
     desired_channel: str,
-    thr: Union[Tuple[float, float], int, float] = (-70, -40),
+    thr: Union[Tuple[float, float], int, float],
     m: Optional[Union[int, float]] = None,
     n: Optional[Union[int, Tuple[int, int]]] = None,
     erode: Optional[List[Tuple[int, int]]] = None,
@@ -361,7 +361,10 @@ def get_transient_noise_mask_multichannel(
 
 
 def get_impulse_noise_mask_multichannel(
-    source_Sv: xr.Dataset, method: str = "ryan", **kwargs
+    source_Sv: xr.Dataset,
+    method: str = "ryan",
+    thr: Union[Tuple[float, float], int, float] = 10,
+    **kwargs,
 ) -> xr.DataArray:
     """
     Algorithms for masking Impulse noise.
@@ -372,6 +375,9 @@ def get_impulse_noise_mask_multichannel(
         Dataset  containing the Sv data to create a mask
     method: str, optional
         The method (ryan, ryan iterable or wang) used to mask impulse noise. Defaults to 'ryan'.
+    thr: float or tuple
+        User-defined threshold value (dB) (ryan and ryan iterable) o
+        r a 2-element tuple specifying the range of threshold values (wang)
 
     Returns
     -------
@@ -381,8 +387,11 @@ def get_impulse_noise_mask_multichannel(
     """
     channel_list = source_Sv["channel"].values
     mask_list = []
+    print(kwargs)
     for channel in channel_list:
-        mask = get_impulse_noise_mask(source_Sv, channel, method, **kwargs)
+        mask = get_impulse_noise_mask(
+            source_Sv, desired_channel=channel, method=method, thr=thr, **kwargs
+        )
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
