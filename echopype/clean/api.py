@@ -449,3 +449,4 @@ def get_attenuation_mask_multichannel(
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
+  

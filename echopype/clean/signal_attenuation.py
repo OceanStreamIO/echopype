@@ -4,6 +4,7 @@ from skimage.measure import label
 
 from ..utils.mask_transformation import full as _full, lin as _lin, log as _log, twod as _twod
 
+
 DEFAULT_RYAN_PARAMS = {"r0": 180, "r1": 280, "n": 30, "thr": -6, "start": 0}
 DEFAULT_ARIZA_PARAMS = {"offset": 20, "thr": (-40, -35), "m": 20, "n": 50}
 
@@ -106,6 +107,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
 
 
 def _ariza(source_Sv, desired_channel, parameters=DEFAULT_ARIZA_PARAMS):
+
     """
     Mask attenuated pings by looking at seabed breaches.
 

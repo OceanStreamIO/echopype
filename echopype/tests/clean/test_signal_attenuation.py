@@ -28,5 +28,4 @@ def test_get_signal_attenuation_mask(
     count_true = np.count_nonzero(mask)
     count_false = mask.size - count_true
     true_false_counts = (count_true, count_false)
-    print(true_false_counts)
     assert true_false_counts == expected_true_false_counts

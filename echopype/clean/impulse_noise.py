@@ -358,3 +358,4 @@ def _ryan_iterable(
         for mask in mask_list[1:]:
             mask_xr |= mask
     return mask_xr
+  

@@ -53,7 +53,6 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
     excluded above 250 m by default to avoid the removal of aggregated biota.
 
     Args:
-    Args:
         source_Sv (xr.DataArray): Sv array
         selected_channel (str): name of the channel to process
         parameters(dict): dict of parameters, containing:
@@ -114,6 +113,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
                         )
                     )
                 mask[i, j] = sample - block > thr
+
     mask = np.logical_not(mask)
     return_mask = xr.DataArray(
         mask,
@@ -126,6 +126,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
 def _fielding(
     source_Sv: xr.DataArray, desired_channel: str, parameters: dict = FIELDING_DEFAULT_PARAMS
 ):
+
     """
     Mask transient noise with method proposed by Fielding et al (unpub.).
 
