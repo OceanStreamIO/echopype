@@ -87,6 +87,24 @@ def minio_bucket():
     )
 
 @pytest.fixture(scope="session")
+def setup_test_data_jr230():
+    file_name = "JR230-D20091215-T121917.raw"
+    return (_setup_file(file_name)
+
+
+@pytest.fixture(scope="session"))
+def setup_test_data_jr161():
+    file_name = "JR161-D20061118-T010645.raw"
+    return _setup_file(file_name)
+
+
+@pytest.fixture(scope="session"))
+def setup_test_data_jr179():
+    file_name = "JR179-D20080410-T150637.raw"
+    return _setup_file(file_name)
+
+
+@pytest.fixture(scope="session")
 def sv_dataset_jr230(setup_test_data_jr230) -> xr.DataArray:
     return _get_sv_dataset(setup_test_data_jr230)
 
@@ -111,3 +129,5 @@ def complete_dataset_jr179(setup_test_data_jr179):
 def raw_dataset_jr179(setup_test_data_jr179):
     ed = _get_raw_dataset(setup_test_data_jr179)
     return ed
+
+
