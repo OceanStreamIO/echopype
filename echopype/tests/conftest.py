@@ -1,6 +1,7 @@
 """``pytest`` configuration."""
 
 from ftplib import FTP
+
 import os
 import subprocess
 import pytest
@@ -85,7 +86,6 @@ def minio_bucket():
         secret="minioadmin",
     )
 
-
 @pytest.fixture(scope="session")
 def setup_test_data_jr230():
     file_name = "JR230-D20091215-T121917.raw"
@@ -104,7 +104,6 @@ def setup_test_data_jr179():
     return _setup_file(file_name)
 
 
-# Separate Sv dataset fixtures for each file
 @pytest.fixture(scope="session")
 def sv_dataset_jr230(setup_test_data_jr230) -> xr.DataArray:
     return _get_sv_dataset(setup_test_data_jr230)
@@ -130,3 +129,5 @@ def complete_dataset_jr179(setup_test_data_jr179):
 def raw_dataset_jr179(setup_test_data_jr179):
     ed = _get_raw_dataset(setup_test_data_jr179)
     return ed
+
+
