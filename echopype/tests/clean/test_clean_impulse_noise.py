@@ -1,45 +1,40 @@
-import os
 import pytest
-
 import numpy as np
-import xarray as xr
-
 import echopype.clean
-
+from echopype.clean.impulse_noise import (
+    RYAN_DEFAULT_PARAMS,
+    RYAN_ITERABLE_DEFAULT_PARAMS,
+    WANG_DEFAULT_PARAMS,
+)
 
 # Note: We've removed all the setup and utility functions since they are now in conftest.py
 
+DESIRED_CHANNEL = "GPT 120 kHz 00907203422d 1 ES120-7"
+DESIRED_FREQUENCY = 120000
+
 
 @pytest.mark.parametrize(
-    "method,thr,m,n,erode,dilate,median,expected_true_false_counts",
+    "method,parameters,desired_channel,desired_frequency,expected_true_false_counts",
     [
-        ("ryan", 10, 5, 1, None, None, None, (2130885, 32419)),
-        ("ryan_iterable", 10, 5, (1, 2), None, None, None, (2125144, 38160)),
-        ("wang", (-70, -40), None, None, [(3, 3)], [(5, 5), (7, 7)], [(7, 7)], (635732, 1527572)),
+        ("ryan", RYAN_DEFAULT_PARAMS, DESIRED_CHANNEL, None, (2130885, 32419)),
+        ("ryan_iterable", RYAN_ITERABLE_DEFAULT_PARAMS, DESIRED_CHANNEL, None, (2124976, 38328)),
+        ("wang", WANG_DEFAULT_PARAMS, None, DESIRED_FREQUENCY, (635732, 1527572)),
     ],
 )
 def test_get_impulse_noise_mask(
     sv_dataset_jr230,  # Use the specific fixture for the JR230 file
     method,
-    thr,
-    m,
-    n,
-    erode,
-    dilate,
-    median,
+    parameters,
+    desired_channel,
+    desired_frequency,
     expected_true_false_counts,
 ):
     source_Sv = sv_dataset_jr230
-    desired_channel = "GPT 120 kHz 00907203422d 1 ES120-7"
     mask = echopype.clean.get_impulse_noise_mask(
         source_Sv,
-        desired_channel,
-        thr=thr,
-        m=m,
-        n=n,
-        erode=erode,
-        dilate=dilate,
-        median=median,
+        parameters=parameters,
+        desired_channel=desired_channel,
+        desired_frequency=desired_frequency,
         method=method,
     )
     count_true = np.count_nonzero(mask)

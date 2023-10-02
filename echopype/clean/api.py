@@ -2,19 +2,15 @@
 Functions for reducing variabilities in backscatter data.
 """
 import pathlib
-from typing import List, Optional, Tuple, Union
+from typing import Union
 
-import numpy as np
 import xarray as xr
 from pandas import Index
 
+from ..utils.io import get_dataset
+from ..utils.misc import frequency_nominal_to_channel
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
-from . import signal_attenuation, transient_noise
-from .impulse_noise import (
-    _find_impulse_mask_ryan,
-    _find_impulse_mask_ryan_iterable,
-    _find_impulse_mask_wang,
-)
+from . import impulse_noise, signal_attenuation, transient_noise
 from .noise_est import NoiseEst
 
 
@@ -90,9 +86,10 @@ def remove_noise(ds_Sv, ping_num, range_sample_num, noise_max=None, SNR_threshol
 
 def get_transient_noise_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
-    desired_channel: str,
-    mask_type: str = "ryan",
-    **kwargs,
+    parameters: dict,
+    desired_channel: str = None,
+    desired_frequency: int = None,
+    method: str = "ryan",
 ) -> xr.DataArray:
     """
     Create a mask based on the identified signal attenuations of Sv values at 38KHz.
@@ -108,6 +105,10 @@ def get_transient_noise_mask(
         else it specifies the path to a zarr or netcdf file containing
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
+    desired_channel: str
+        Name of the desired frequency channel.
+    desired_frequency: int
+        Desired frequency, in case the channel is not directly specified
     mask_type: str with either "ryan" or "fielding" based on
         the preferred method for signal attenuation mask generation
     Returns
@@ -122,43 +123,28 @@ def get_transient_noise_mask(
         If neither ``ryan`` or ``fielding`` are given
 
     """
-    assert mask_type in ["ryan", "fielding"], "mask_type must be either 'ryan' or 'fielding'"
-    selected_channel_Sv = source_Sv.sel(channel=desired_channel)
-    Sv = selected_channel_Sv["Sv"].values
-    r = source_Sv["echo_range"].values[0, 0]
-    if mask_type == "ryan":
-        # Define a list of the keyword arguments your function can handle
-        valid_args = {"m", "n", "thr", "excludeabove", "operation"}
-        # Use dictionary comprehension to filter out any kwargs not in your list
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_args}
-        mask = transient_noise._ryan(Sv, r, m=5, **filtered_kwargs)
-    elif mask_type == "fielding":
-        # Define a list of the keyword arguments your function can handle
-        valid_args = {"r0", "r1", "roff", "n", "thr"}
-        # Use dictionary comprehension to filter out any kwargs not in your list
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_args}
-        mask = transient_noise._fielding(Sv, r, **filtered_kwargs)
-    else:
-        raise ValueError("The provided mask_type must be ryan or fielding!")
+    source_Sv = get_dataset(source_Sv)
+    mask_map = {
+        "ryan": transient_noise._ryan,
+        "fielding": transient_noise._fielding,
+    }
+    if method not in mask_map.keys():
+        raise ValueError(f"Unsupported method: {method}")
+    if desired_channel is None:
+        if desired_frequency is None:
+            raise ValueError("Must specify either desired channel or desired frequency")
+        else:
+            desired_channel = frequency_nominal_to_channel(source_Sv, desired_frequency)
 
-    mask = np.logical_not(mask)
-    return_mask = xr.DataArray(
-        mask,
-        dims=("ping_time", "range_sample"),
-        coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
-    )
-    return return_mask
+    mask = mask_map[method](source_Sv, desired_channel, parameters)
+    return mask
 
 
 def get_impulse_noise_mask(
-    source_Sv: xr.Dataset,
-    desired_channel: str,
-    thr: Union[Tuple[float, float], int, float],
-    m: Optional[Union[int, float]] = None,
-    n: Optional[Union[int, Tuple[int, int]]] = None,
-    erode: Optional[List[Tuple[int, int]]] = None,
-    dilate: Optional[List[Tuple[int, int]]] = None,
-    median: Optional[List[Tuple[int, int]]] = None,
+    source_Sv: Union[xr.Dataset, str, pathlib.Path],
+    parameters: {},
+    desired_channel: str = None,
+    desired_frequency: int = None,
     method: str = "ryan",
 ) -> xr.DataArray:
     """
@@ -166,28 +152,41 @@ def get_impulse_noise_mask(
 
     Parameters
     ----------
-    source_Sv: xr.Dataset
-        Dataset  containing the Sv data to create a mask
+    source_Sv: xr.Dataset or str or pathlib.Path
+        If a Dataset this value contains the Sv data to create a mask for,
+        else it specifies the path to a zarr or netcdf file containing
+        a Dataset. This input must correspond to a Dataset that has the
+        coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
     desired_channel: str
         Name of the desired frequency channel.
-    thr: float or tuple
-        User-defined threshold value (dB) (ryan and ryan iterable) o
-        r a 2-element tuple specifying the range of threshold values (wang).
-    m: int or float, optional
-        Vertical binning length (in number of samples or range) (ryan and ryan iterable).
-        Defaults to None.
-    n: int or tuple, optional
-        Number of pings either side for comparisons (ryan),
-        or a 2-element tuple specifying the range (ryan iterable).
-        Defaults to None.
-    erode: List of 2-element tuples, optional
-        List indicating the window's size for each erosion cycle (wang). Defaults to None.
-    dilate: List of 2-element tuples, optional
-        List indicating the window's size for each dilation cycle (wang). Defaults to None.
-    median: List of 2-element tuples, optional
-        List indicating the window's size for each median filter cycle (wang). Defaults to None.
+    desired_frequency: int
+        Desired frequency, in case the channel is not directly specified
+    parameters: {}
+        Parameter dictionary containing function-specific arguments.
+        Can contain the following:
+            thr: Union[Tuple[float, float], int, float]
+                User-defined threshold value (dB) (ryan and ryan iterable)
+                or a 2-element tuple with the range of threshold values (wang).
+            m:  Optional[Union[int, float]] = None,
+                Vertical binning length (in number of samples or range)
+                (ryan and ryan iterable).
+                Defaults to None.
+            n: Optional[Union[int, Tuple[int, int]]] = None,
+                Number of pings either side for comparisons (ryan),
+                or a 2-element tuple specifying the range (ryan iterable).
+                Defaults to None.
+            erode: Optional[List[Tuple[int, int]]] = None,
+                Window size for each erosion cycle (wang).
+                Defaults to None.
+            dilate: Optional[List[Tuple[int, int]]] = None,
+                Window size for each dilation cycle (wang).
+                Defaults to None.
+            median: Optional[List[Tuple[int, int]]] = None,
+                Window size for each median filter cycle (wang).
+                Defaults to None.
     method: str, optional
-        The method (ryan, ryan iterable or wang) used to mask impulse noise. Defaults to 'ryan'.
+        The method (ryan, ryan_iterable or wang) used to mask impulse noise.
+        Defaults to 'ryan'.
 
     Returns
     -------
@@ -195,34 +194,33 @@ def get_impulse_noise_mask(
         A DataArray consisting of a mask for the Sv data, wherein True values signify
         samples that are free of noise.
     """
-
-    # Our goal is to have a mask where True represents samples that are NOT impulse noise.
+    # Our goal is to have a mask True on samples that are NOT impulse noise.
     # So, we negate the obtained mask.
-
-    if method == "ryan":
-        impulse_mask_ryan = _find_impulse_mask_ryan(source_Sv, desired_channel, m, n, thr)
-        noise_free_mask = ~impulse_mask_ryan
-    elif method == "ryan_iterable":
-        impulse_mask_ryan_iterable = _find_impulse_mask_ryan_iterable(
-            source_Sv, desired_channel, m, n, thr
-        )
-        noise_free_mask = ~impulse_mask_ryan_iterable
-    elif method == "wang":
-        impulse_mask_wang = _find_impulse_mask_wang(
-            source_Sv, desired_channel, thr, erode, dilate, median
-        )
-        noise_free_mask = ~impulse_mask_wang
-    else:
+    source_Sv = get_dataset(source_Sv)
+    mask_map = {
+        "ryan": impulse_noise._ryan,
+        "ryan_iterable": impulse_noise._ryan_iterable,
+        "wang": impulse_noise._wang,
+    }
+    if method not in mask_map.keys():
         raise ValueError(f"Unsupported method: {method}")
+    if desired_channel is None:
+        if desired_frequency is None:
+            raise ValueError("Must specify either desired channel or desired frequency")
+        else:
+            desired_channel = frequency_nominal_to_channel(source_Sv, desired_frequency)
+    impulse_mask = mask_map[method](source_Sv, desired_channel, parameters)
+    noise_free_mask = ~impulse_mask
 
     return noise_free_mask
 
 
 def get_attenuation_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
-    desired_channel: str,
-    mask_type: str = "ryan",
-    **kwargs,
+    parameters: dict,
+    desired_channel: str = None,
+    desired_frequency: int = None,
+    method: str = "ryan",
 ) -> xr.DataArray:
     """
     Create a mask based on the identified signal attenuations of Sv values at 38KHz.
@@ -242,7 +240,12 @@ def get_attenuation_mask(
         else it specifies the path to a zarr or netcdf file containing
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
-    desired_channel: the Dataset channel to be used for identifying the signal attenuation.
+    parameters: dict
+        Dictionary of parameters to pass to the relevant subfunctions.
+    desired_channel: str
+        Name of the desired frequency channel.
+    desired_frequency: int
+        Desired frequency, in case the channel is not directly specified
     mask_type: str with either "ryan" or "ariza" based on the
                 preferred method for signal attenuation mask generation
     Returns
@@ -254,7 +257,7 @@ def get_attenuation_mask(
     Raises
     ------
     ValueError
-        If neither ``ryan`` or ``azira`` are given
+        If neither ``ryan`` or ``ariza`` are given
 
     Notes
     -----
@@ -264,31 +267,21 @@ def get_attenuation_mask(
     --------
 
     """
-    assert mask_type in ["ryan", "ariza"], "mask_type must be either 'ryan' or 'ariza'"
-    selected_channel_Sv = source_Sv.sel(channel=desired_channel)
-    Sv = selected_channel_Sv["Sv"].values
-    r = source_Sv["echo_range"].values[0, 0]
-    if mask_type == "ryan":
-        # Define a list of the keyword arguments your function can handle
-        valid_args = {"r0", "r1", "n", "thr", "start"}
-        # Use dictionary comprehension to filter out any kwargs not in your list
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_args}
-        mask = signal_attenuation._ryan(Sv, r, **filtered_kwargs)
-    elif mask_type == "ariza":
-        # Define a list of the keyword arguments your function can handle
-        valid_args = {"offset", "thr", "m", "n"}
-        # Use dictionary comprehension to filter out any kwargs not in your list
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_args}
-        mask = signal_attenuation._ariza(Sv, r, **filtered_kwargs)
-    else:
-        raise ValueError("The provided mask_type must be ryan or ariza!")
+    source_Sv = get_dataset(source_Sv)
+    mask_map = {
+        "ryan": signal_attenuation._ryan,
+        "ariza": signal_attenuation._ariza,
+    }
+    if method not in mask_map.keys():
+        raise ValueError(f"Unsupported method: {method}")
+    if desired_channel is None:
+        if desired_frequency is None:
+            raise ValueError("Must specify either desired channel or desired frequency")
+        else:
+            desired_channel = frequency_nominal_to_channel(source_Sv, desired_frequency)
 
-    return_mask = xr.DataArray(
-        mask,
-        dims=("ping_time", "range_sample"),
-        coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
-    )
-    return return_mask
+    mask = mask_map[method](source_Sv, desired_channel, parameters)
+    return mask
 
 
 def create_multichannel_mask(masks: [xr.Dataset], channels: [str]) -> xr.Dataset:
@@ -319,8 +312,8 @@ def create_multichannel_mask(masks: [xr.Dataset], channels: [str]) -> xr.Dataset
 
 def get_transient_noise_mask_multichannel(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
-    mask_type: str = "ryan",
-    **kwargs,
+    parameters: dict,
+    method: str = "ryan",
 ) -> xr.DataArray:
     """
     Create a mask based on the identified signal attenuations of Sv values at 38KHz.
@@ -336,8 +329,10 @@ def get_transient_noise_mask_multichannel(
         else it specifies the path to a zarr or netcdf file containing
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
-    mask_type: str with either "ryan" or "fielding" based on
+    method: str with either "ryan" or "fielding" based on
         the preferred method for signal attenuation mask generation
+    parameters: dict
+        Default method parameters
     Returns
     -------
     xr.DataArray
@@ -351,10 +346,13 @@ def get_transient_noise_mask_multichannel(
         If neither ``ryan`` or ``fielding`` are given
 
     """
+    source_Sv = get_dataset(source_Sv)
     channel_list = source_Sv["channel"].values
     mask_list = []
     for channel in channel_list:
-        mask = get_transient_noise_mask(source_Sv, channel, mask_type, **kwargs)
+        mask = get_transient_noise_mask(
+            source_Sv, parameters=parameters, desired_channel=channel, method=method
+        )
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
@@ -362,9 +360,8 @@ def get_transient_noise_mask_multichannel(
 
 def get_impulse_noise_mask_multichannel(
     source_Sv: xr.Dataset,
+    parameters: dict,
     method: str = "ryan",
-    thr: Union[Tuple[float, float], int, float] = 10,
-    **kwargs,
 ) -> xr.DataArray:
     """
     Algorithms for masking Impulse noise.
@@ -375,9 +372,8 @@ def get_impulse_noise_mask_multichannel(
         Dataset  containing the Sv data to create a mask
     method: str, optional
         The method (ryan, ryan iterable or wang) used to mask impulse noise. Defaults to 'ryan'.
-    thr: float or tuple
-        User-defined threshold value (dB) (ryan and ryan iterable) o
-        r a 2-element tuple specifying the range of threshold values (wang)
+    parameters: dict
+        Default method parameters
 
     Returns
     -------
@@ -385,12 +381,15 @@ def get_impulse_noise_mask_multichannel(
         A multichannel DataArray consisting of a mask for the Sv data,
         wherein True values signify samples that are free of noise.
     """
+    source_Sv = get_dataset(source_Sv)
     channel_list = source_Sv["channel"].values
     mask_list = []
-    print(kwargs)
     for channel in channel_list:
         mask = get_impulse_noise_mask(
-            source_Sv, desired_channel=channel, method=method, thr=thr, **kwargs
+            source_Sv,
+            parameters=parameters,
+            desired_channel=channel,
+            method=method,
         )
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
@@ -399,8 +398,8 @@ def get_impulse_noise_mask_multichannel(
 
 def get_attenuation_mask_multichannel(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
-    mask_type: str = "ryan",
-    **kwargs,
+    parameters: dict,
+    method: str = "ryan",
 ) -> xr.DataArray:
     """
     Create a mask based on the identified signal attenuations of Sv values at 38KHz.
@@ -420,8 +419,11 @@ def get_attenuation_mask_multichannel(
         else it specifies the path to a zarr or netcdf file containing
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
-    mask_type: str with either "ryan" or "ariza" based on the
+    method: str with either "ryan" or "ariza" based on the
                 preferred method for signal attenuation mask generation
+    parameters: dict
+        Default method parameters
+
     Returns
     -------
     xr.DataArray
@@ -432,12 +434,19 @@ def get_attenuation_mask_multichannel(
     Raises
     ------
     ValueError
-        If neither ``ryan`` or ``azira`` are given
+        If neither ``ryan`` or ``ariza`` are given
     """
+    source_Sv = get_dataset(source_Sv)
     channel_list = source_Sv["channel"].values
     mask_list = []
     for channel in channel_list:
-        mask = get_attenuation_mask(source_Sv, channel, mask_type, **kwargs)
+        mask = get_attenuation_mask(
+            source_Sv,
+            parameters=parameters,
+            desired_channel=channel,
+            method=method,
+        )
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
+  

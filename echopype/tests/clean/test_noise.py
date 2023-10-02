@@ -3,6 +3,9 @@ import xarray as xr
 import echopype as ep
 import pytest
 from numpy.random import default_rng
+from echopype.clean.transient_noise import RYAN_DEFAULT_PARAMS as RYAN_DEFAULT_PARAMS_TR
+from echopype.clean.signal_attenuation import DEFAULT_RYAN_PARAMS
+from echopype.clean.impulse_noise import RYAN_DEFAULT_PARAMS
 
 
 def test_remove_noise():
@@ -89,19 +92,23 @@ def test_remove_noise_no_sound_absorption():
 
 def test_transient_mask_all(sv_dataset_jr161):
     source_Sv = sv_dataset_jr161
-    ml = ep.clean.api.get_transient_noise_mask_multichannel(source_Sv)
+    ml = ep.clean.api.get_transient_noise_mask_multichannel(
+        source_Sv, method="ryan", parameters=RYAN_DEFAULT_PARAMS_TR
+    )
     assert np.all(ml["channel"] == source_Sv["channel"])
 
 
 def test_impulse_mask_all(sv_dataset_jr230):
     source_Sv = sv_dataset_jr230
     ml = ep.clean.api.get_impulse_noise_mask_multichannel(
-        source_Sv, method="ryan", thr=10, m=5, n=1
+        source_Sv, method="ryan", parameters=RYAN_DEFAULT_PARAMS
     )
     assert np.all(ml["channel"] == source_Sv["channel"])
 
 
 def test_attenuation_mask_all(sv_dataset_jr161):
     source_Sv = sv_dataset_jr161
-    ml = ep.clean.api.get_attenuation_mask_multichannel(source_Sv)
+    ml = ep.clean.api.get_attenuation_mask_multichannel(
+        source_Sv, method="ryan", parameters=DEFAULT_RYAN_PARAMS
+    )
     assert np.all(ml["channel"] == source_Sv["channel"])
