@@ -89,10 +89,10 @@ def minio_bucket():
 @pytest.fixture(scope="session")
 def setup_test_data_jr230():
     file_name = "JR230-D20091215-T121917.raw"
-    return (_setup_file(file_name)
+    return _setup_file(file_name)
 
 
-@pytest.fixture(scope="session"))
+@pytest.fixture(scope="session")
 def setup_test_data_jr161():
     file_name = "JR161-D20061118-T010645.raw"
     return _setup_file(file_name)
