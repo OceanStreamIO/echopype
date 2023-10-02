@@ -94,6 +94,7 @@ def test_transient_mask_all(sv_dataset_jr161):
     source_Sv = sv_dataset_jr161
     ml = ep.clean.api.get_transient_noise_mask_multichannel(
         source_Sv, method="ryan", parameters=RYAN_DEFAULT_PARAMS_TR
+    )
     assert np.all(ml["channel"] == source_Sv["channel"])
 
 
@@ -101,6 +102,7 @@ def test_impulse_mask_all(sv_dataset_jr230):
     source_Sv = sv_dataset_jr230
     ml = ep.clean.api.get_impulse_noise_mask_multichannel(
         source_Sv, method="ryan", parameters=RYAN_DEFAULT_PARAMS
+    )
     assert np.all(ml["channel"] == source_Sv["channel"])
 
 
