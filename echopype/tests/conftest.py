@@ -98,7 +98,7 @@ def setup_test_data_jr161():
     return _setup_file(file_name)
 
 
-@pytest.fixture(scope="session"))
+@pytest.fixture(scope="session")
 def setup_test_data_jr179():
     file_name = "JR179-D20080410-T150637.raw"
     return _setup_file(file_name)
