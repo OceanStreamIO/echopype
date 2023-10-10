@@ -7,15 +7,6 @@ import numpy as np
 import xarray as xr
 from pandas import Index
 
-from echopype.mask.seabed import (
-    _get_seabed_mask_ariza,
-    _get_seabed_mask_blackwell,
-    _get_seabed_mask_blackwell_mod,
-    _get_seabed_mask_deltaSv,
-    _get_seabed_mask_experimental,
-    _get_seabed_mask_maxSv,
-)
-
 from ..utils.io import get_dataset, validate_source_ds_da
 from ..utils.misc import frequency_nominal_to_channel
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
@@ -675,9 +666,9 @@ def get_seabed_mask_multichannel(
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
-  
-  
-  def get_shoal_mask(
+
+
+def get_shoal_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     desired_channel: str,
     mask_type: str = "will",
@@ -733,10 +724,9 @@ def get_seabed_mask_multichannel(
         coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
     )
     return return_mask, return_mask_
-  
-  
-  
-  def get_shoal_mask_multichannel(
+
+
+def get_shoal_mask_multichannel(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     mask_type: str = "will",
     **kwargs,
@@ -747,29 +737,29 @@ def get_seabed_mask_multichannel(
 
     Args:
         source_Sv: xr.Dataset or str or pathlib.Path
-                    If a Dataset this value contains the Sv data to create a mask for,
-                    else it specifies the path to a zarr or netcdf file containing
-                    a Dataset. This input must correspond to a Dataset that has the
-                    coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
+                        If a Dataset this value contains the Sv data to create a mask for,
+                        else it specifies the path to a zarr or netcdf file containing
+                        a Dataset. This input must correspond to a Dataset that has the
+                        coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
         mask_type: string specifying the algorithm to use
-                    currently, 'weill' is the only one implemented
+                        currently, 'weill' is the only one implemented
 
     Returns
     -------
     mask: xr.DataArray
-        A DataArray containing the multichannel mask for the Sv data.
-        Regions satisfying the thresholding criteria are filled with ``True``,
-        else the regions are filled with ``False``.
-    mask_: xr.DataArray
-        A DataArray containing the multichannel mask for areas in which shoals were searched.
-        Edge regions are filled with 'False', whereas the portion
-        in which shoals could be detected is 'True'
+            A DataArray containing the multichannel mask for the Sv data.
+            Regions satisfying the thresholding criteria are filled with ``True``,
+            else the regions are filled with ``False``.
+        mask_: xr.DataArray
+            A DataArray containing the multichannel mask for areas in which shoals were searched.
+            Edge regions are filled with 'False', whereas the portion
+            in which shoals could be detected is 'True'
 
 
     Raises
     ------
     ValueError
-        If 'weill' is not given
+            If 'weill' is not given
     """
     channel_list = source_Sv["channel"].values
     mask_list = []
@@ -781,5 +771,3 @@ def get_seabed_mask_multichannel(
     mask = create_multichannel_mask(mask_list, channel_list)
     _mask = create_multichannel_mask(_mask_list, channel_list)
     return mask, _mask
-  
-  
