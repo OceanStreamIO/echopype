@@ -961,6 +961,7 @@ def test_apply_mask_channel_variation(source_has_ch, mask_has_ch):
                 ]
             )
         truth_da = xr.DataArray(
+            input_array,
             coords={
                 "channel": ["chan1", "chan2", "chan3"],
                 "ping_time": np.arange(2),
@@ -976,8 +977,7 @@ def test_apply_mask_channel_variation(source_has_ch, mask_has_ch):
         )
 
     assert masked_ds[var_name].equals(truth_da)
-    
-    
+
 
 def create_channel_input_mask(coords):
     """
@@ -1028,4 +1028,3 @@ def test_seabed_mask_all(complete_dataset_jr179):
         source_Sv, method="ariza", parameters=ep.mask.seabed.ARIZA_DEFAULT_PARAMS
     )
     assert np.all(ml["channel"] == source_Sv["channel"])
-
