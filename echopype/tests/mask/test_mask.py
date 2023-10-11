@@ -1024,5 +1024,7 @@ def test_shoal_mask_all(sv_dataset_jr161):
 
 def test_seabed_mask_all(complete_dataset_jr179):
     source_Sv = complete_dataset_jr179
-    ml = echopype.mask.api.get_seabed_mask_multichannel(source_Sv)
+    ml = ep.mask.api.get_seabed_mask_multichannel(
+        source_Sv, method="ariza", parameters=ep.mask.seabed.ARIZA_DEFAULT_PARAMS
+    )
     assert np.all(ml["channel"] == source_Sv["channel"])
