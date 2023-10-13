@@ -15,6 +15,8 @@ __authors__ = [
 ]
 
 
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -126,7 +128,6 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
 def _fielding(
     source_Sv: xr.DataArray, desired_channel: str, parameters: dict = FIELDING_DEFAULT_PARAMS
 ):
-
     """
     Mask transient noise with method proposed by Fielding et al (unpub.).
 
@@ -188,11 +189,24 @@ def _fielding(
     if r0 > r1:
         raise Exception("Minimum range has to be shorter than maximum range")
 
-    # return empty mask if searching range is outside the echosounder range
+    # In the case where the searching range is outside the echosounder range:
     if (r0 > r[-1]) or (r1 < r[0]):
         mask = np.zeros_like(Sv, dtype=bool)
         mask_ = np.zeros_like(Sv, dtype=bool)
-        return mask, mask_
+
+        # Raise a warning to inform the user
+        warnings.warn(
+            "The searching range is outside the echosounder range. "
+            "A default mask with all False values is returned, "
+            "which won't mask any data points in the dataset."
+        )
+
+        combined_mask = np.logical_or(mask, mask_)
+        return xr.DataArray(
+            combined_mask,
+            dims=("ping_time", "range_sample"),
+            coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
+        )
 
     # get upper and lower range indexes
     up = np.argmin(abs(r - r0))
