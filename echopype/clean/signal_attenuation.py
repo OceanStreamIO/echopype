@@ -1,9 +1,10 @@
+import warnings
+
 import numpy as np
 import xarray as xr
 from skimage.measure import label
 
 from ..utils.mask_transformation import full as _full, lin as _lin, log as _log, twod as _twod
-
 
 DEFAULT_RYAN_PARAMS = {"r0": 180, "r1": 280, "n": 30, "thr": -6, "start": 0}
 DEFAULT_ARIZA_PARAMS = {"offset": 20, "thr": (-40, -35), "m": 20, "n": 50}
@@ -66,9 +67,9 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
 
     # return empty mask if searching range is outside the echosounder range
     if (r0 > r[-1]) or (r1 < r[0]):
+        warnings.warn("Searching range is outside the echosounder range. Returning empty mask.")
         mask = np.zeros_like(Sv, dtype=bool)
         mask_ = np.zeros_like(Sv, dtype=bool)
-        return mask, mask_
 
         # turn layer boundaries into arrays with length = Sv.shape[1]
     r0 = np.ones(Sv.shape[1]) * r0
@@ -107,7 +108,6 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
 
 
 def _ariza(source_Sv, desired_channel, parameters=DEFAULT_ARIZA_PARAMS):
-
     """
     Mask attenuated pings by looking at seabed breaches.
 
