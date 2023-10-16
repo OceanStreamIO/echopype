@@ -201,7 +201,7 @@ def _fielding(
             "which won't mask any data points in the dataset."
         )
 
-        combined_mask = np.logical_or(mask, mask_)
+        combined_mask = mask
         return xr.DataArray(
             combined_mask,
             dims=("ping_time", "range_sample"),
