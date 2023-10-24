@@ -1,8 +1,8 @@
 """
 Functions for enhancing the spatial and temporal coherence of data.
 """
-import re
-from typing import Literal, Union
+import logging
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -10,163 +10,19 @@ import xarray as xr
 
 from ..consolidate.api import POSITION_VARIABLES
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
-from .mvbs import get_MVBS_along_channels
-from .nasc import (
-    check_identical_depth,
-    get_depth_bin_info,
-    get_dist_bin_info,
+from .utils import (
+    _convert_bins_to_interval_index,
+    _get_reduced_positions,
+    _parse_x_bin,
+    _set_MVBS_attrs,
+    _set_var_attrs,
+    _setup_and_validate,
+    compute_raw_MVBS,
+    compute_raw_NASC,
     get_distance_from_latlon,
 )
 
-
-def _set_var_attrs(da, long_name, units, round_digits, standard_name=None):
-    """
-    Attach common attributes to DataArray variable.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        DataArray that will receive attributes
-    long_name : str
-        Variable long_name attribute
-    units : str
-        Variable units attribute
-    round_digits : int
-        Number of digits after decimal point for rounding off actual_range
-    standard_name : str
-        CF standard_name, if available (optional)
-    """
-
-    da.attrs = {
-        "long_name": long_name,
-        "units": units,
-        "actual_range": [
-            round(float(da.min().values), round_digits),
-            round(float(da.max().values), round_digits),
-        ],
-    }
-    if standard_name:
-        da.attrs["standard_name"] = standard_name
-
-
-def _set_MVBS_attrs(ds):
-    """
-    Attach common attributes.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        dataset containing MVBS
-    """
-    ds["ping_time"].attrs = {
-        "long_name": "Ping time",
-        "standard_name": "time",
-        "axis": "T",
-    }
-
-    _set_var_attrs(
-        ds["Sv"],
-        long_name="Mean volume backscattering strength (MVBS, mean Sv re 1 m-1)",
-        units="dB",
-        round_digits=2,
-    )
-
-
-def _convert_bins_to_interval_index(
-    bins: list, closed: Literal["left", "right"] = "left"
-) -> pd.IntervalIndex:
-    """
-    Convert bins to sorted pandas IntervalIndex
-    with specified closed end
-
-    Parameters
-    ----------
-    bins : list
-        The bin edges
-    closed : {'left', 'right'}, default 'left'
-        Which side of bin interval is closed
-
-    Returns
-    -------
-    pd.IntervalIndex
-        The resulting IntervalIndex
-    """
-    return pd.IntervalIndex.from_breaks(bins, closed=closed).sort_values()
-
-
-def _parse_x_bin(x_bin: str, x_label="range_bin") -> float:
-    """
-    Parses x bin string, check unit,
-    and returns x bin in the specified unit.
-
-    Currently only available for:
-    range_bin: meters (m)
-    dist_bin: nautical miles (nmi)
-
-    Parameters
-    ----------
-    x_bin : str
-        X bin string, e.g., "0.5nmi" or "10m"
-    x_label : {"range_bin", "dist_bin"}, default "range_bin"
-        The label of the x bin.
-
-    Returns
-    -------
-    float
-        The resulting x bin value in x unit,
-        based on label.
-
-    Raises
-    ------
-    ValueError
-        If the x bin string doesn't include unit value.
-    TypeError
-        If the x bin is not a type string.
-    KeyError
-        If the x label is not one of the available labels.
-    """
-    x_bin_map = {
-        "range_bin": {
-            "name": "Range bin",
-            "unit": "m",
-            "ex": "10m",
-            "unit_label": "meters",
-            "pattern": r"([\d+]*[.,]{0,1}[\d+]*)(\s+)?(m)",
-        },
-        "dist_bin": {
-            "name": "Distance bin",
-            "unit": "nmi",
-            "ex": "0.5nmi",
-            "unit_label": "nautical miles",
-            "pattern": r"([\d+]*[.,]{0,1}[\d+]*)(\s+)?(nmi)",
-        },
-    }
-    x_bin_info = x_bin_map.get(x_label, None)
-
-    if x_bin_info is None:
-        raise KeyError(f"x_label must be one of {list(x_bin_map.keys())}")
-
-    # First check for bin types
-    if not isinstance(x_bin, str):
-        raise TypeError("'x_bin' must be a string")
-    # normalize to lower case
-    # for x_bin
-    x_bin = x_bin.strip().lower()
-    # Only matches meters
-    match_obj = re.match(x_bin_info["pattern"], x_bin)
-
-    # Do some checks on x_bin inputs
-    if match_obj is None:
-        # This shouldn't be other units
-        raise ValueError(
-            f"{x_bin_info['name']} must be in "
-            f"{x_bin_info['unit_label']} "
-            f"(e.g., '{x_bin_info['ex']}')."
-        )
-
-    # Convert back to float
-    x_bin = float(match_obj.group(1))
-    return x_bin
+logger = logging.getLogger(__name__)
 
 
 @add_processing_level("L3*")
@@ -207,7 +63,7 @@ def compute_MVBS(
         for more details.
     closed: {'left', 'right'}, default 'left'
         Which side of bin interval is closed.
-    **kwargs
+    **flox_kwargs
         Additional keyword arguments to be passed
         to flox reduction function.
 
@@ -216,27 +72,14 @@ def compute_MVBS(
     A dataset containing bin-averaged Sv
     """
 
+    # Setup and validate
+    # * Sv dataset must contain specified range_var
+    # * Parse range_bin
+    # * Check closed value
+    ds_Sv, range_bin = _setup_and_validate(ds_Sv, range_var, range_bin, closed)
+
     if not isinstance(ping_time_bin, str):
         raise TypeError("ping_time_bin must be a string")
-
-    range_bin = _parse_x_bin(range_bin, "range_bin")
-
-    # Clean up filenames dimension if it exists
-    # not needed here
-    if "filenames" in ds_Sv.dims:
-        ds_Sv = ds_Sv.drop_dims("filenames")
-
-    # Check if range_var is valid
-    if range_var not in ["echo_range", "depth"]:
-        raise ValueError("range_var must be one of 'echo_range' or 'depth'.")
-
-    # Check if range_var exists in ds_Sv
-    if range_var not in ds_Sv.data_vars:
-        raise ValueError(f"range_var '{range_var}' does not exist in the input dataset.")
-
-    # Check for closed values
-    if closed not in ["right", "left"]:
-        raise ValueError(f"{closed} is not a valid option. Options are 'left' or 'right'.")
 
     # create bin information for echo_range
     # this computes the echo range max since there might NaNs in the data
@@ -255,7 +98,7 @@ def compute_MVBS(
     # Set interval index for groups
     ping_interval = _convert_bins_to_interval_index(ping_interval, closed=closed)
     range_interval = _convert_bins_to_interval_index(range_interval, closed=closed)
-    raw_MVBS = get_MVBS_along_channels(
+    raw_MVBS = compute_raw_MVBS(
         ds_Sv,
         range_interval,
         ping_interval,
@@ -275,12 +118,9 @@ def compute_MVBS(
         },
     )
 
-    # "has_positions" attribute is inserted in get_MVBS_along_channels
-    # when the dataset has position information
+    # If dataset has position information
     # propagate this to the final MVBS dataset
-    if raw_MVBS.attrs.get("has_positions", False):
-        for var in POSITION_VARIABLES:
-            ds_MVBS[var] = (["ping_time"], raw_MVBS[var].data, ds_Sv[var].attrs)
+    ds_MVBS = _get_reduced_positions(ds_Sv, ds_MVBS, "MVBS", ping_interval)
 
     # Add water level if uses echo_range and it exists in Sv dataset
     if range_var == "echo_range" and "water_level" in ds_Sv.data_vars:
@@ -423,8 +263,11 @@ def compute_MVBS_index_binning(ds_Sv, range_sample_num=100, ping_num=100):
 
 def compute_NASC(
     ds_Sv: xr.Dataset,
-    cell_dist: Union[int, float],  # TODO: allow xr.DataArray
-    cell_depth: Union[int, float],  # TODO: allow xr.DataArray
+    range_bin: str = "10m",
+    dist_bin: str = "0.5nmi",
+    method: str = "map-reduce",
+    closed: Literal["left", "right"] = "left",
+    **flox_kwargs,
 ) -> xr.Dataset:
     """
     Compute Nautical Areal Scattering Coefficient (NASC) from an Sv dataset.
@@ -434,10 +277,19 @@ def compute_NASC(
     ds_Sv : xr.Dataset
         A dataset containing Sv data.
         The Sv dataset must contain ``latitude``, ``longitude``, and ``depth`` as data variables.
-    cell_dist: int, float
-        The horizontal size of each NASC cell, in nautical miles [nmi]
-    cell_depth: int, float
-        The vertical size of each NASC cell, in meters [m]
+    range_bin : str, default '10m'
+        bin size along ``depth`` in meters (m).
+    dist_bin : str, default '0.5nmi'
+        bin size along ``distance`` in nautical miles (nmi).
+    method: str, default 'map-reduce'
+        The flox strategy for reduction of dask arrays only.
+        See flox `documentation <https://flox.readthedocs.io/en/latest/implementation.html>`_
+        for more details.
+    closed: {'left', 'right'}, default 'left'
+        Which side of bin interval is closed.
+    **flox_kwargs
+        Additional keyword arguments to be passed
+        to flox reduction function.
 
     Returns
     -------
@@ -446,98 +298,83 @@ def compute_NASC(
 
     Notes
     -----
-    The NASC computation implemented here corresponds to the Echoview algorithm PRC_NASC
+    The NASC computation implemented here generally corresponds to the Echoview algorithm PRC_NASC
     https://support.echoview.com/WebHelp/Reference/Algorithms/Analysis_Variables/PRC_ABC_and_PRC_NASC.htm#PRC_NASC  # noqa
     The difference is that since in echopype masking of the Sv dataset is done explicitly using
-    functions in the ``mask`` subpackage so the computation only involves computing the
-    mean Sv and the mean height within each cell.
+    functions in the ``mask`` subpackage, the computation only involves computing the
+    mean Sv and the mean height within each cell, where some Sv "pixels" may have been
+    masked as NaN.
 
-    In addition, here the binning of pings into individual cells is based on the actual horizontal
+    In addition, in echopype the binning of pings into individual cells is based on the actual horizontal
     distance computed from the latitude and longitude coordinates of each ping in the Sv dataset.
     Therefore, both regular and irregular horizontal distance in the Sv dataset are allowed.
     This is different from Echoview's assumption of constant ping rate, vessel speed, and sample
-    thickness when computing mean Sv.
+    thickness when computing mean Sv
+    (see https://support.echoview.com/WebHelp/Reference/Algorithms/Analysis_Variables/Sv_mean.htm#Conversions).  # noqa
     """
-    # Check Sv contains lat/lon
-    if "latitude" not in ds_Sv or "longitude" not in ds_Sv:
-        raise ValueError("Both 'latitude' and 'longitude' must exist in the input Sv dataset.")
+    # Set range_var to be 'depth'
+    range_var = "depth"
 
-    # Check if depth vectors are identical within each channel
-    if not ds_Sv["depth"].groupby("channel").map(check_identical_depth).all():
-        raise ValueError(
-            "Only Sv data with identical depth vectors across all pings "
-            "are allowed in the current compute_NASC implementation."
-        )
+    # Setup and validate
+    # * Sv dataset must contain latitude, longitude, and depth
+    # * Parse range_bin
+    # * Check closed value
+    ds_Sv, range_bin = _setup_and_validate(
+        ds_Sv, range_var, range_bin, closed, required_data_vars=POSITION_VARIABLES
+    )
+
+    # Check if dist_bin is a string
+    if not isinstance(dist_bin, str):
+        raise TypeError("dist_bin must be a string")
+
+    # Parse the dist_bin string and convert to float
+    dist_bin = _parse_x_bin(dist_bin, "dist_bin")
 
     # Get distance from lat/lon in nautical miles
     dist_nmi = get_distance_from_latlon(ds_Sv)
+    ds_Sv = ds_Sv.assign_coords({"distance_nmi": ("ping_time", dist_nmi)}).swap_dims(
+        {"ping_time": "distance_nmi"}
+    )
 
-    # Find binning indices along distance
-    bin_num_dist, dist_bin_idx = get_dist_bin_info(dist_nmi, cell_dist)  # dist_bin_idx is 1-based
+    # create bin information along range_var
+    # this computes the range_var max since there might NaNs in the data
+    range_var_max = ds_Sv[range_var].max()
+    range_interval = np.arange(0, range_var_max + range_bin, range_bin)
 
-    # Find binning indices along depth: channel-dependent
-    bin_num_depth, depth_bin_idx = get_depth_bin_info(ds_Sv, cell_depth)  # depth_bin_idx is 1-based
+    # create bin information along distance_nmi
+    # this computes the distance max since there might NaNs in the data
+    dist_max = ds_Sv["distance_nmi"].max()
+    dist_interval = np.arange(0, dist_max + dist_bin, dist_bin)
 
-    # Compute mean sv (volume backscattering coefficient, linear scale)
-    # This is essentially to compute MVBS over the cell defined here,
-    # which are typically larger than those used for MVBS.
-    # The implementation below is brute force looping, but can be optimized
-    # by experimenting with different delayed schemes.
-    # The optimized routines can then be used here and
-    # in commongrid.compute_MVBS and clean.estimate_noise
-    sv_mean_2nasc = []
-    for ch_seq in np.arange(ds_Sv["channel"].size):
-        # TODO: .compute each channel sequentially?
-        #       dask.delay within each channel?
-        ds_Sv_ch = ds_Sv["Sv"].isel(channel=ch_seq).data  # preserve the underlying type
-        ds_Sv_depth = ds_Sv["depth"].isel(channel=ch_seq).data
+    # Set interval index for groups
+    dist_interval = _convert_bins_to_interval_index(dist_interval, closed=closed)
+    range_interval = _convert_bins_to_interval_index(range_interval, closed=closed)
 
-        sv_mean_dist_depth_2nasc = []
-        for dist_idx in np.arange(bin_num_dist) + 1:  # along ping_time
-            sv_mean_depth_2nasc = []
-            for depth_idx in np.arange(bin_num_depth) + 1:  # along depth
-                # Sv dim: ping_time x depth
-                Sv_cut = ds_Sv_ch[dist_idx == dist_bin_idx, :][
-                    :, depth_idx == depth_bin_idx[ch_seq]
-                ]
-                num_pings_in_cut_cell, num_depth_vals_in_cut_cell = Sv_cut.shape
-                r = ds_Sv_depth[:, depth_idx == depth_bin_idx[ch_seq]][0]
-                # get height of samples -> t
-                # derived from the difference between the corresponding consecutive depths
-                t = np.r_[np.diff(r), np.nan]
-                t = np.vstack([t] * num_pings_in_cut_cell)
-                sv = 10 ** (Sv_cut / 10)
-                # per -> the percentage of not nan samples
-                per = np.mean(np.logical_not(np.isnan(sv))) * 100
-                # num_pings_in_cut_cell * num_depth_vals_in_cut_cell = no. of samples in cut cell
-                sv_mean_depth_2nasc.append(
-                    (
-                        np.nanmean(sv * t)
-                        * (
-                            (num_pings_in_cut_cell * num_depth_vals_in_cut_cell)
-                            / num_pings_in_cut_cell
-                        )
-                        * 4
-                        * np.pi
-                        * 1852**2
-                    )
-                    / (per / 100)
-                )
+    raw_NASC = compute_raw_NASC(
+        ds_Sv,
+        range_interval,
+        dist_interval,
+        method=method,
+        **flox_kwargs,
+    )
 
-            sv_mean_dist_depth_2nasc.append(sv_mean_depth_2nasc)
-
-        sv_mean_2nasc.append(sv_mean_dist_depth_2nasc)
-
-    ds_NASC = xr.DataArray(
-        np.array(sv_mean_2nasc),
-        dims=["channel", "distance", "depth"],
+    # create MVBS dataset
+    # by transforming the binned dimensions to regular coords
+    ds_NASC = xr.Dataset(
+        data_vars={"NASC": (["channel", "distance", range_var], raw_NASC["sv"].data)},
         coords={
-            "channel": ds_Sv["channel"].values,
-            "distance": np.arange(bin_num_dist) * cell_dist,
-            "depth": np.arange(bin_num_depth) * cell_depth,
+            "distance": np.array([v.left for v in raw_NASC["distance_nmi_bins"].values]),
+            "channel": raw_NASC["channel"].values,
+            range_var: np.array([v.left for v in raw_NASC[f"{range_var}_bins"].values]),
         },
-        name="NASC",
-    ).to_dataset()
+    )
+
+    # If dataset has position information
+    # propagate this to the final NASC dataset
+    ds_NASC = _get_reduced_positions(ds_Sv, ds_NASC, "NASC", dist_interval)
+
+    # Set ping time binning information
+    ds_NASC["ping_time"] = (["distance"], raw_NASC["ping_time"].data, ds_Sv["ping_time"].attrs)
 
     ds_NASC["frequency_nominal"] = ds_Sv["frequency_nominal"]  # re-attach frequency_nominal
 
@@ -548,7 +385,7 @@ def compute_NASC(
         units="m2 nmi-2",
         round_digits=3,
     )
-    _set_var_attrs(ds_NASC["distance"], "Cumulative distance", "m", 3)
+    _set_var_attrs(ds_NASC["distance"], "Cumulative distance", "nmi", 3)
     _set_var_attrs(ds_NASC["depth"], "Cell depth", "m", 3, standard_name="depth")
 
     # Calculate and add ACDD bounding box global attributes
