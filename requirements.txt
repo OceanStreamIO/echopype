@@ -5,6 +5,7 @@ numpy
 pynmea2
 pytz
 scipy
+scikit-image
 xarray
 pandas
 zarr
@@ -16,3 +17,5 @@ xarray-datatree==0.0.6
 psutil>=5.9.1
 geopy
 flox>=0.7.2,<1.0.0
+scikit-image
+charset-normalizer<3.2

@@ -285,7 +285,9 @@ class TestParsed2Zarr:
             ek60_parsed2zarr_obj.parser_obj.zarr_datagrams
         )
         # convert channel column to a string
-        ek60_parsed2zarr_obj.datagram_df["channel"] = ek60_parsed2zarr_obj.datagram_df["channel"].astype(str)
+        ek60_parsed2zarr_obj.datagram_df["channel"] = ek60_parsed2zarr_obj.datagram_df[
+            "channel"
+        ].astype(str)
         yield ek60_parsed2zarr_obj
 
     def _get_storage_options(self, dest_path: Optional[str]) -> Optional[dict]:
@@ -377,53 +379,51 @@ class TestParsed2Zarr:
 
         # Now metadata should exist
         assert zarr_store.fs.exists(zarr_store.root + "/.zmetadata")
-        
+
     def test__write_power(self, ek60_parsed2zarr_obj_w_df):
         # There shouldn't be any group here
         assert "power" not in ek60_parsed2zarr_obj_w_df.zarr_root
-        
+
         ek60_parsed2zarr_obj_w_df._write_power(
-            df=ek60_parsed2zarr_obj_w_df.datagram_df,
-            max_mb=self.max_mb
+            df=ek60_parsed2zarr_obj_w_df.datagram_df, max_mb=self.max_mb
         )
-        
+
         # There should now be power group
         assert "power" in ek60_parsed2zarr_obj_w_df.zarr_root
-        
+
         for k, arr in ek60_parsed2zarr_obj_w_df.zarr_root["/power"].arrays():
             assert arr.shape == self.ek60_expected_shapes[k]
-    
+
     def test__write_angle(self, ek60_parsed2zarr_obj_w_df):
         # There shouldn't be any group here
         assert "angle" not in ek60_parsed2zarr_obj_w_df.zarr_root
-        
+
         ek60_parsed2zarr_obj_w_df._write_angle(
-            df=ek60_parsed2zarr_obj_w_df.datagram_df,
-            max_mb=self.max_mb
+            df=ek60_parsed2zarr_obj_w_df.datagram_df, max_mb=self.max_mb
         )
         # There should now be angle group
         assert "angle" in ek60_parsed2zarr_obj_w_df.zarr_root
-        
+
         for k, arr in ek60_parsed2zarr_obj_w_df.zarr_root["/angle"].arrays():
             assert arr.shape == self.ek60_expected_shapes[k]
-    
+
     def test_power_dataarray(self, ek60_parsed2zarr_obj_w_df):
         power_dataarray = ek60_parsed2zarr_obj_w_df.power_dataarray
         assert isinstance(power_dataarray, xr.DataArray)
-        
+
         assert power_dataarray.name == "backscatter_r"
         assert power_dataarray.dims == ("ping_time", "channel", "range_sample")
         assert power_dataarray.shape == self.ek60_expected_shapes["power"]
-        
+
     def test_angle_dataarrays(self, ek60_parsed2zarr_obj_w_df):
         angle_athwartship, angle_alongship = ek60_parsed2zarr_obj_w_df.angle_dataarrays
         assert isinstance(angle_athwartship, xr.DataArray)
         assert isinstance(angle_alongship, xr.DataArray)
-        
+
         assert angle_alongship.name == "angle_alongship"
         assert angle_alongship.dims == ("ping_time", "channel", "range_sample")
         assert angle_alongship.shape == self.ek60_expected_shapes["angle_alongship"]
-        
+
         assert angle_athwartship.name == "angle_athwartship"
         assert angle_athwartship.dims == ("ping_time", "channel", "range_sample")
         assert angle_athwartship.shape == self.ek60_expected_shapes["angle_athwartship"]

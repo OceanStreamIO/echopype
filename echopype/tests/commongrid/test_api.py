@@ -9,7 +9,7 @@ from echopype.commongrid.utils import (
     _parse_x_bin,
     _groupby_x_along_channels,
     get_distance_from_latlon,
-    compute_raw_NASC
+    compute_raw_NASC,
 )
 from echopype.tests.commongrid.conftest import get_NASC_echoview
 
@@ -45,9 +45,7 @@ def test__parse_x_bin(x_bin, x_label, expected_result):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ["range_var", "lat_lon"], [("depth", False), ("echo_range", False)]
-)
+@pytest.mark.parametrize(["range_var", "lat_lon"], [("depth", False), ("echo_range", False)])
 def test__groupby_x_along_channels(request, range_var, lat_lon):
     """Testing the underlying function of compute_MVBS and compute_NASC"""
     range_bin = 20
@@ -74,7 +72,7 @@ def test__groupby_x_along_channels(request, range_var, lat_lon):
         .indexes["ping_time"]
     )
     ping_interval = d_index.union([d_index[-1] + pd.Timedelta(ping_time_bin)])
-    
+
     sv_mean = _groupby_x_along_channels(
         ds_Sv,
         range_interval,
@@ -82,7 +80,7 @@ def test__groupby_x_along_channels(request, range_var, lat_lon):
         x_var="ping_time",
         range_var=range_var,
         method=method,
-        **flox_kwargs
+        **flox_kwargs,
     )
 
     # Check that the range_var is in the dimension
