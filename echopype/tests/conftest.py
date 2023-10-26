@@ -129,4 +129,3 @@ def complete_dataset_jr179(setup_test_data_jr179):
 def raw_dataset_jr179(setup_test_data_jr179):
     ed = _get_raw_dataset(setup_test_data_jr179)
     return ed
-
