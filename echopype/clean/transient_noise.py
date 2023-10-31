@@ -14,7 +14,6 @@ __authors__ = [
     "Mihai Boldeanu",  # adapted the mask transient noise algorithms to echopype
 ]
 
-
 import warnings
 
 import numpy as np
@@ -54,6 +53,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
     transient noise. Sv values are removed if exceed a threshold. Masking is
     excluded above 250 m by default to avoid the removal of aggregated biota.
 
+    Args:
     Args:
         source_Sv (xr.DataArray): Sv array
         selected_channel (str): name of the channel to process
@@ -115,7 +115,6 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
                         )
                     )
                 mask[i, j] = sample - block > thr
-
     mask = np.logical_not(mask)
     return_mask = xr.DataArray(
         mask,
@@ -189,21 +188,19 @@ def _fielding(
     if r0 > r1:
         raise Exception("Minimum range has to be shorter than maximum range")
 
-    # In the case where the searching range is outside the echosounder range:
+    # return a default mask with all True values
+    # if searching range is outside the echosounder range
     if (r0 > r[-1]) or (r1 < r[0]):
-        mask = np.zeros_like(Sv, dtype=bool)
-        mask_ = np.zeros_like(Sv, dtype=bool)
-
         # Raise a warning to inform the user
         warnings.warn(
             "The searching range is outside the echosounder range. "
-            "A default mask with all False values is returned, "
+            "A default mask with all True values is returned, "
             "which won't mask any data points in the dataset."
         )
-
-        combined_mask = mask
+        mask = np.ones_like(Sv, dtype=bool)
+        mask_ = np.ones_like(Sv, dtype=bool)
         return xr.DataArray(
-            combined_mask,
+            mask,
             dims=("ping_time", "range_sample"),
             coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
         )
