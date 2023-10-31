@@ -197,11 +197,10 @@ def _fielding(
             "A default mask with all True values is returned, "
             "which won't mask any data points in the dataset."
         )
-        mask = np.zeros_like(Sv, dtype=bool)
-        mask_ = np.zeros_like(Sv, dtype=bool)
-        not_mask = np.logical_not(mask)
+        mask = np.ones_like(Sv, dtype=bool)
+        mask_ = np.ones_like(Sv, dtype=bool)
         return xr.DataArray(
-            not_mask,
+            mask,
             dims=("ping_time", "range_sample"),
             coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
         )
