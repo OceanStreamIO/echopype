@@ -188,19 +188,20 @@ def _fielding(
     if r0 > r1:
         raise Exception("Minimum range has to be shorter than maximum range")
 
-    # return empty mask if searching range is outside the echosounder range
+    # return a default mask with all True values
+    # if searching range is outside the echosounder range
     if (r0 > r[-1]) or (r1 < r[0]):
         # Raise a warning to inform the user
         warnings.warn(
             "The searching range is outside the echosounder range. "
-            "A default mask with all False values is returned, "
+            "A default mask with all True values is returned, "
             "which won't mask any data points in the dataset."
         )
         mask = np.zeros_like(Sv, dtype=bool)
         mask_ = np.zeros_like(Sv, dtype=bool)
-        combined_mask = mask
+        not_mask = np.logical_not(mask)
         return xr.DataArray(
-            combined_mask,
+            not_mask,
             dims=("ping_time", "range_sample"),
             coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
         )
