@@ -65,9 +65,12 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
     if r0 > r1:
         raise Exception("Minimum range has to be shorter than maximum range")
 
-    # return empty mask if searching range is outside the echosounder range
+    # give empty mask if searching range is outside the echosounder range
     if (r0 > r[-1]) or (r1 < r[0]):
-        warnings.warn("Searching range is outside the echosounder range. Returning empty mask.")
+        warnings.warn(
+            "Searching range is outside the echosounder range."
+            "Returning a default mask with all True values."
+        )
         mask = np.zeros_like(Sv, dtype=bool)
         mask_ = np.zeros_like(Sv, dtype=bool)
 
