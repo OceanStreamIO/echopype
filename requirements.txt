@@ -5,6 +5,7 @@ numpy
 pynmea2
 pytz
 scipy
+scikit-image
 xarray
 pandas
 zarr
