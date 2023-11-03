@@ -141,7 +141,7 @@ def _maxSv(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX_SV_
     maxSv[np.isnan(maxSv)] = -999
     idx[maxSv < thr[0]] = 0
 
-    # mask seabed, proceed only with acepted seabed indexes (!=0)
+    # mask seabed, proceed only with accepted seabed indexes (!=0)
     idx = idx
     mask = np.zeros(Sv.shape, dtype=bool)
     for j, i in enumerate(idx):
@@ -221,7 +221,7 @@ def _deltaSv(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX_S
     # get indexes for the first value above threshold, along every ping
     idx = np.nanargmax((Svdiff[r0:r1, :] > thr), axis=0) + r0
 
-    # mask seabed, proceed only with acepted seabed indexes (!=0)
+    # mask seabed, proceed only with accepted seabed indexes (!=0)
     idx = idx
     mask = np.zeros(Sv.shape, dtype=bool)
     for j, i in enumerate(idx):

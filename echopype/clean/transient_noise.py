@@ -122,6 +122,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
 
     mask = mask.where(~(mask["range_sample"] < r0), False)
     mask = ~mask
+    mask = mask.drop("channel")
 
     return mask
 
@@ -283,4 +284,5 @@ def _fielding(
 
     # uncomment if we want to mask out the columns where no processing could be done,
     # mask = nan_full_mask & noise_spike_mask
+    mask = mask.drop("channel")
     return mask
