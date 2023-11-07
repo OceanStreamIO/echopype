@@ -85,3 +85,16 @@ def depth_from_pressure(
     gravity = g * (1.0 + k1 * x**2 + k2 * x**4) + k3 * pressure
     depth = depth_w_g / gravity
     return depth
+
+  
+def frequency_nominal_to_channel(source_Sv, frequency_nominal: int):
+    """
+    Given a value for a nominal frequency, returns the channel associated with it
+    """
+    channels = source_Sv["frequency_nominal"].coords["channel"].values
+    freqs = source_Sv["frequency_nominal"].values
+    chan = channels[freqs == frequency_nominal]
+    assert len(chan) == 1, "Frequency not uniquely identified"
+    channel = chan[0]
+    return channel
+
