@@ -245,7 +245,6 @@ def test_load_parse_azfp_xml(azfp_path):
         assert len(parseAZFP.parameters[f"acquire_frequency_phase{num}"]) == 4
         assert all(len(parseAZFP.parameters[f"{x}_phase{num}"]) == 4 for x in expected_len_params)
         assert parseAZFP.parameters[f"frequency_number_phase{num}"] == ['1', '2', '3', '4']
-
         assert parseAZFP.parameters[f"acquire_frequency_phase{num}"] == [1, 1, 1, 1]
         assert parseAZFP.parameters[f"dig_rate_phase{num}"] == [20000, 20000, 20000, 20000]
         assert parseAZFP.parameters[f"range_averaging_samples_phase{num}"] == [1, 1, 1, 1]

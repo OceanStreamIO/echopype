@@ -6,18 +6,10 @@ from typing import Union
 
 import xarray as xr
 from pandas import Index
-import pathlib
-from typing import Union
 
-import xarray as xr
-from pandas import Index
-
-from ..utils.io import get_dataset
-from ..utils.misc import frequency_nominal_to_channel
 from ..utils.io import get_dataset
 from ..utils.misc import frequency_nominal_to_channel
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
-from . import impulse_noise, signal_attenuation, transient_noise
 from . import impulse_noise, signal_attenuation, transient_noise
 from .noise_est import NoiseEst
 
