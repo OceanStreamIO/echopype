@@ -377,7 +377,6 @@ class TestParsed2Zarr:
 
         # Now metadata should exist
         assert zarr_store.fs.exists(zarr_store.root + "/.zmetadata")
-
         
     def test__write_power(self, ek60_parsed2zarr_obj_w_df):
         # There shouldn't be any group here
@@ -415,7 +414,7 @@ class TestParsed2Zarr:
         assert power_dataarray.name == "backscatter_r"
         assert power_dataarray.dims == ("ping_time", "channel", "range_sample")
         assert power_dataarray.shape == self.ek60_expected_shapes["power"]
-
+        
     def test_angle_dataarrays(self, ek60_parsed2zarr_obj_w_df):
         angle_athwartship, angle_alongship = ek60_parsed2zarr_obj_w_df.angle_dataarrays
         assert isinstance(angle_athwartship, xr.DataArray)
