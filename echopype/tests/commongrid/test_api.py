@@ -74,6 +74,7 @@ def test__groupby_x_along_channels(request, range_var, lat_lon):
         .indexes["ping_time"]
     )
     ping_interval = d_index.union([d_index[-1] + pd.Timedelta(ping_time_bin)])
+    
     sv_mean = _groupby_x_along_channels(
         ds_Sv,
         range_interval,
