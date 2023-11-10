@@ -92,8 +92,8 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
 
     ret_mask = xr.DataArray(
         data=line_to_square(mask, Sv, "range_sample").transpose(),
-        dims=Sv.dims,
-        coords=Sv.coords,
+        dims=("ping_time", "range_sample"),
+        coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
     )
     return ret_mask
 
