@@ -13,7 +13,7 @@ DEFAULT_RYAN_PARAMS = {"r0": 180, "r1": 280, "n": 30, "thr": -6, "start": 0}
 @pytest.mark.parametrize(
     "method,parameters,expected_true_false_counts",
     [
-        ("ryan", DEFAULT_RYAN_PARAMS, (2118538, 48393)),
+        ("ryan", DEFAULT_RYAN_PARAMS, (1881950, 284981)),
         # ("ariza", DEFAULT_ARIZA_PARAMS, (39897, 2127034)),
     ],
 )

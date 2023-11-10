@@ -78,17 +78,24 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
             coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
         )
 
+    # find indexes for upper and lower SL limits
+    up = abs(r - r0).argmin(dim="range_sample").item()
+    lw = abs(r - r1).argmin(dim="range_sample").item()
+
+    layer_mask = (Sv["range_sample"] >= up) & (Sv["range_sample"] <= lw)
+    layer_Sv = Sv.where(layer_mask)
+
     # Creating shifted arrays for block comparison
-    shifted_arrays = [Sv.shift(ping_time=i) for i in range(-n, n + 1)]
+    shifted_arrays = [layer_Sv.shift(ping_time=i) for i in range(-n, n + 1)]
     block = xr.concat(shifted_arrays, dim="shifted_ping_time")
 
     # Computing the median of the block and the pings
-    ping_median = Sv.median(dim="range_sample", skipna=True)
+    ping_median = layer_Sv.median(dim="range_sample", skipna=True)
     block_median = block.median(dim=["range_sample", "shifted_ping_time"], skipna=True)
 
     # Creating the mask based on the threshold
     mask_condition = (ping_median - block_median) > thr
-    mask = mask_condition.reindex_like(Sv, method="nearest").fillna(True)
+    mask = mask_condition.reindex_like(layer_Sv, method="nearest").fillna(True)
 
     ret_mask = xr.DataArray(
         data=line_to_square(mask, Sv, "range_sample").transpose(),
