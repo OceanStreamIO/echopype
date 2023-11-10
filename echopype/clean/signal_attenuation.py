@@ -78,37 +78,24 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters=DEFAULT_RYAN
             coords={"ping_time": source_Sv.ping_time, "range_sample": source_Sv.range_sample},
         )
 
-    # get upper and lower range indexes
-    up = abs(r - r0).argmin(dim="range_sample").values
-    lw = abs(r - r1).argmin(dim="range_sample").values
+    # Creating shifted arrays for block comparison
+    shifted_arrays = [Sv.shift(ping_time=i) for i in range(-n, n + 1)]
+    block = xr.concat(shifted_arrays, dim="shifted_ping_time")
 
-    ping_median = _log(_lin(Sv).median(dim="range_sample", skipna=True))
-    # ping_75q = _log(_lin(Sv).reduce(np.nanpercentile, q=75, dim="range_sample"))
+    # Computing the median of the block and the pings
+    ping_median = Sv.median(dim="range_sample", skipna=True)
+    block_median = block.median(dim=["range_sample", "shifted_ping_time"], skipna=True)
 
-    block = Sv[:, up:lw]
-    block_list = [block.shift({"ping_time": i}) for i in range(-n, n)]
-    concat_block = xr.concat(block_list, dim="range_sample")
-    block_median = _log(_lin(concat_block).median(dim="range_sample", skipna=True))
+    # Creating the mask based on the threshold
+    mask_condition = (ping_median - block_median) > thr
+    mask = mask_condition.reindex_like(Sv, method="nearest").fillna(True)
 
-    noise_column = (ping_median - block_median) > thr
-
-    noise_column_mask = xr.DataArray(
-        data=line_to_square(noise_column, Sv, "range_sample").transpose(),
+    ret_mask = xr.DataArray(
+        data=line_to_square(mask, Sv, "range_sample").transpose(),
         dims=Sv.dims,
         coords=Sv.coords,
     )
-    noise_column_mask = ~noise_column_mask
-
-    nan_mask = Sv.isnull()
-    nan_mask = nan_mask.reduce(np.any, dim="range_sample")
-
-    # uncomment these if we want to mask the areas where we couldn't calculate
-    # nan_mask[0:n] = False
-    # nan_mask[-n:] = False
-
-    mask = nan_mask & noise_column_mask
-    mask = mask.drop("channel")
-    return mask
+    return ret_mask
 
 
 def _ariza(source_Sv, desired_channel, parameters=DEFAULT_ARIZA_PARAMS):
