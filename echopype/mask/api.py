@@ -10,10 +10,8 @@ from pandas import Index
 from ..utils.io import get_dataset, validate_source_ds_da
 from ..utils.misc import frequency_nominal_to_channel
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
-
-from . import shoal, seabed
+from . import seabed, shoal
 from .freq_diff import _check_freq_diff_source_Sv, _parse_freq_diff_eq
-
 
 # lookup table with key string operator and value as corresponding Python operator
 str2ops = {
@@ -553,7 +551,7 @@ def create_multichannel_mask(masks: [xr.Dataset], channels: [str]) -> xr.Dataset
     )
     return result
 
-  
+
 def get_shoal_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     parameters: dict,
@@ -604,8 +602,8 @@ def get_shoal_mask(
             raise ValueError("Must specify either desired channel or desired frequency")
         else:
             desired_channel = frequency_nominal_to_channel(source_Sv, desired_frequency)
-    mask, mask_ = mask_map[method](source_Sv, desired_channel, parameters)
-    return mask, mask_
+    mask = mask_map[method](source_Sv, desired_channel, parameters)
+    return mask
 
 
 def get_shoal_mask_multichannel(
@@ -645,18 +643,15 @@ def get_shoal_mask_multichannel(
     """
     channel_list = source_Sv["channel"].values
     mask_list = []
-    _mask_list = []
     for channel in channel_list:
-        mask, _mask = get_shoal_mask(
+        mask = get_shoal_mask(
             source_Sv, desired_channel=channel, method=method, parameters=parameters
         )
         mask_list.append(mask)
-        _mask_list.append(_mask)
     mask = create_multichannel_mask(mask_list, channel_list)
-    _mask = create_multichannel_mask(_mask_list, channel_list)
-    return mask, _mask
-  
-  
+    return mask
+
+
 def get_seabed_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     parameters: dict,
@@ -770,4 +765,3 @@ def get_seabed_mask_multichannel(
         mask_list.append(mask)
     mask = create_multichannel_mask(mask_list, channel_list)
     return mask
-  
