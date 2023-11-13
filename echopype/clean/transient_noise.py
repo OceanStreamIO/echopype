@@ -30,25 +30,23 @@ from ..utils.mask_transformation_xr import (
 )
 
 RYAN_DEFAULT_PARAMS = {
-    #    "m": 5,
-    #    "n": 20,
     "m": 5,
     "n": 5,
     "thr": 20,
     "excludeabove": 250,
     "operation": "mean",
-    "dask_chunking": {"ping_time": 100},
+    "dask_chunking": {"ping_time": 100, "range_sample": 100},
 }
 FIELDING_DEFAULT_PARAMS = {
     "r0": 200,
     "r1": 1000,
-    "n": 20,
+    "n": 5,
     "thr": [2, 0],
     "roff": 250,
     "jumps": 5,
     "maxts": -35,
     "start": 0,
-    "dask_chunking": {"ping_time": 100},
+    "dask_chunking": {"ping_time": 100, "range_sample": 100},
 }
 
 
@@ -66,6 +64,7 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
     excluded above 250 m by default to avoid the removal of aggregated biota.
 
     Args:
+    Args:
         source_Sv (xr.DataArray): Sv array
         selected_channel (str): name of the channel to process
         parameters(dict): dict of parameters, containing:
@@ -79,7 +78,6 @@ def _ryan(source_Sv: xr.DataArray, desired_channel: str, parameters: dict = RYAN
                 'median'
                 'mode'#not in numpy
             dask_chunking(dict): specify what dask chunking to use
-
 
     Returns:
         xarray.DataArray: xr.DataArray with mask indicating the presence of transient noise.
@@ -211,33 +209,36 @@ def _fielding(
         )
 
     # get upper and lower range indexes
-    up = abs(r - r0).argmin(dim="range_sample").values
-    lw = abs(r - r1).argmin(dim="range_sample").values
+    up = abs(r - r0).argmin(dim="range_sample").item()
+    lw = abs(r - r1).argmin(dim="range_sample").item()
 
     # get minimum range index admitted for processing
     # rmin = abs(r - roff).argmin(dim="range_sample").values
     # get scaling factor index
-    sf = abs(r - jumps).argmin(dim="range_sample").values
+    sf = abs(r - jumps).argmin(dim="range_sample").item()
 
-    range_mask = (Sv.range_sample >= up) & (Sv.range_sample <= lw)
-    Sv_range = Sv.where(range_mask, np.nan)
+    layer_mask = (Sv["range_sample"] >= up) & (Sv["range_sample"] <= lw)
+    Sv_range = Sv.where(layer_mask)
 
     # get columns in which no processing can be done - question, do we want to mask them out?
-    nan_mask = Sv_range.isnull()
-    nan_mask = nan_mask.reduce(np.any, dim="range_sample")
-    nan_mask[0:n] = False
-    nan_mask[-n:] = False
+    # nan_mask = Sv_range.isnull()
+    # nan_mask = nan_mask.reduce(np.any, dim="range_sample")
+    # nan_mask[0:n] = False
+    # nan_mask[-n:] = False
 
-    ping_median = _log(_lin(Sv_range).median(dim="range_sample", skipna=True))
-    ping_75q = _log(_lin(Sv_range).reduce(np.nanpercentile, q=75, dim="range_sample"))
+    # Chunk the data if not already chunked
+    Sv_range = Sv_range.chunk(dask_chunking)
 
-    block = Sv_range[:, up:lw]
-    block_list = [block.shift({"ping_time": i}) for i in range(-n, n)]
-    concat_block = xr.concat(block_list, dim="range_sample")
-    block_median = _log(_lin(concat_block).median(dim="range_sample", skipna=True))
+    ping_median = Sv_range.median(dim="range_sample", skipna=True)
+    ping_75q = Sv_range.reduce(np.nanpercentile, q=75, dim="range_sample")
+
+    shifted_arrays = [Sv_range.shift(ping_time=i) for i in range(-n, n + 1)]
+    block = xr.concat(shifted_arrays, dim="shifted_ping_time")
+    block_median = block.median(dim=["range_sample", "shifted_ping_time"], skipna=True)
 
     # identify columns in which noise can be found
-    noise_column = (ping_75q < maxts) & ((ping_median - block_median) < thr[0])
+    noise_col = (ping_75q < maxts) & ((ping_median - block_median) < thr[0])
+    noise_column = noise_col.compute()
 
     noise_column_mask = xr.DataArray(
         data=line_to_square(noise_column, Sv, "range_sample").transpose(),
@@ -245,35 +246,19 @@ def _fielding(
         coords=Sv.coords,
     )
 
-    # Chunk the data if not already chunked
-    Sv_range_chunked = Sv_range.chunk(dask_chunking)
-
     # Apply rolling operation and reduce using the custom Dask-aware function
-    ping_median = _lin(Sv_range_chunked).rolling(range_sample=sf).reduce(dask_nanmedian)
-    block_median = (
-        _lin(Sv_range_chunked).rolling(range_sample=sf, ping_time=2 * n + 1).reduce(dask_nanmedian)
-    )
-
-    # Compute the results
-    ping_median = _log(ping_median.compute())
-    block_median = _log(block_median.compute())
-
-    height_mask = ping_median - block_median < thr[1]
+    ping_median = Sv_range.rolling(range_sample=sf).reduce(dask_nanmedian)
+    block_median = Sv_range.rolling(range_sample=sf, ping_time=2 * n + 1).reduce(dask_nanmedian)
+    height_mask = (ping_median - block_median).compute() < thr[1]
 
     height_noise_mask = height_mask | noise_column_mask
-
+    # propagate break upward
     flipped_mask = height_noise_mask.isel(range_sample=slice(None, None, -1))
     flipped_mask["range_sample"] = height_mask["range_sample"]
-    neg_mask = ~height_noise_mask
-
-    # propagate break upward
-    flipped_mask = neg_mask.isel(range_sample=slice(None, None, -1))
-    flipped_mask["range_sample"] = height_mask["range_sample"]
-    flipped_mask = ~flipped_mask
     ft = len(flipped_mask.range_sample) - flipped_mask.argmax(dim="range_sample")
 
     first_true_indices = xr.DataArray(
-        line_to_square(ft, flipped_mask, dim="range_sample").transpose(),
+        line_to_square(ft, height_noise_mask, dim="range_sample").transpose(),
         dims=("ping_time", "range_sample"),
         coords={"ping_time": channel_Sv.ping_time, "range_sample": channel_Sv.range_sample},
     )
@@ -283,12 +268,9 @@ def _fielding(
         dims=("ping_time", "range_sample"),
         coords={"ping_time": channel_Sv.ping_time, "range_sample": channel_Sv.range_sample},
     )
-
     noise_spike_mask = height_noise_mask.where(indices > first_true_indices, True)
 
     mask = noise_spike_mask
     mask = mask.drop("channel")
 
-    # uncomment if we want to mask out the columns where no processing could be done,
-    # mask = nan_full_mask & noise_spike_mask
     return mask

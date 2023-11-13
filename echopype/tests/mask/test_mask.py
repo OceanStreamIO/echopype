@@ -1017,11 +1017,10 @@ def test_channel_mask(var_name="var2"):
 
 def test_shoal_mask_all(sv_dataset_jr161):
     source_Sv = sv_dataset_jr161
-    ml, _ml = echopype.mask.api.get_shoal_mask_multichannel(
+    ml = echopype.mask.api.get_shoal_mask_multichannel(
         source_Sv, method="will", parameters=ep.mask.shoal.WEILL_DEFAULT_PARAMETERS
     )
     assert np.all(ml["channel"] == source_Sv["channel"])
-    assert np.all(_ml["channel"] == source_Sv["channel"])
 
 
 def test_seabed_mask_all(complete_dataset_jr179):
@@ -1030,4 +1029,3 @@ def test_seabed_mask_all(complete_dataset_jr179):
         source_Sv, method="ariza", parameters=ep.mask.seabed.ARIZA_DEFAULT_PARAMS
     )
     assert np.all(ml["channel"] == source_Sv["channel"])
-
