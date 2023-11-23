@@ -32,6 +32,7 @@ import pathlib
 from typing import Union
 
 import dask.array as da
+import numpy as np
 import xarray as xr
 from dask_image.ndmorph import binary_closing, binary_opening
 
@@ -115,27 +116,35 @@ def _weill(
     maxhgap = parameters["maxhgap"]
     minvlen = parameters["minvlen"]
     minhlen = parameters["minhlen"]
+
     dask_chunking = parameters["dask_chunking"]
-    dask_chunking = tuple(map(int, dask_chunking.values()))
+
+    # Convert values to integers, handling possible NaN
+    dask_chunking = tuple(map(lambda x: int(x) if not np.isnan(x) else x, dask_chunking.values()))
 
     channel_Sv = source_Sv.sel(channel=desired_channel)
     Sv = channel_Sv["Sv"].chunk(dask_chunking)
-    print("Chunk sizes:", Sv.chunks)
 
-    mask = xr.where(Sv > thr, True, False).chunk(dask_chunking).drop("channel")
-    print(tfc(mask))
-    dask_mask = da.from_array(mask)
+    remove_nan = xr.where(Sv, Sv, thr - 1)  # so we have no nan values
+    mask = xr.where(remove_nan > thr, 1, 0).drop("channel").chunk(dask_chunking)
+
+    dask_mask = da.asarray(mask, allow_unknown_chunksizes=False)
+    dask_mask.compute_chunk_sizes()
 
     # close shoal gaps smaller than the specified box
     if maxvgap > 0 and maxhgap > 0:
         print("Closing\n")
         closing_array = da.ones(shape=(maxhgap, maxvgap), dtype=bool)
-        dask_mask = binary_closing(
-            dask_mask,
-            structure=closing_array,
-            iterations=1,
-        ).compute()
-        print(tfc(dask_mask))
+        print("Before closing:", dask_mask.chunks)
+        dask_mask = (
+            binary_closing(
+                dask_mask,
+                structure=closing_array,
+                iterations=1,
+            ).compute()
+            # .chunk(dask_chunking)
+        )
+        dask_mask = da.asarray(dask_mask, allow_unknown_chunksizes=False)
 
     # drop shoals smaller than the specified box
 
@@ -147,19 +156,8 @@ def _weill(
             structure=opening_array,
             iterations=1,
         ).compute()
-        print(tfc(dask_mask))
+        dask_mask = da.asarray(dask_mask, allow_unknown_chunksizes=False)
 
     mask.values = dask_mask
 
-    # if minvlen > 0 | minhlen > 0:
-    # values = mask.values
-    # label_image = dask_image.ndmeasure.label(values)
-    # print(label_image.values.unique())
-    # print(label_image)
-
     return mask
-
-
-def tfc(mask):
-    count_true = mask.sum().compute().item()
-    return count_true

@@ -8,8 +8,8 @@ DESIRED_CHANNEL = "GPT  38 kHz 009072033fa5 1 ES38"
 
 
 @pytest.mark.parametrize(
-    "method, desired_channel,parameters,expected_tf_counts,expected_tf_counts_",
-    [("will", DESIRED_CHANNEL, WEILL_DEFAULT_PARAMETERS, (101550, 2065381))],
+    "method, desired_channel,parameters,expected_tf_counts",
+    [("will", DESIRED_CHANNEL, WEILL_DEFAULT_PARAMETERS, (4467, 2162464))],
 )
 def test_get_shoal_mask_weill(
     sv_dataset_jr161, method, desired_channel, parameters, expected_tf_counts
