@@ -116,6 +116,7 @@ def _weill(
     maxhgap = parameters["maxhgap"]
     minvlen = parameters["minvlen"]
     minhlen = parameters["minhlen"]
+    dask_chunking = parameters["dask_chunking"]
 
     dask_chunking = parameters["dask_chunking"]
 
