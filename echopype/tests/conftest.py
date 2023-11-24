@@ -2,7 +2,6 @@
 from ftplib import FTP
 
 import os
-import subprocess
 import pytest
 
 import xarray as xr
@@ -20,8 +19,8 @@ def _setup_file(file_name):
         download_ftp_file(ftp, FTP_PARTIAL_PATH, file_name, TEST_DATA_FOLDER)
     return os.path.join(TEST_DATA_FOLDER, file_name)
 
-def download_ftp_file(ftp, remote_path, file_name, local_path):
 
+def download_ftp_file(ftp, remote_path, file_name, local_path):
     # Construct the full paths
     remote_file_path = os.path.join(remote_path, file_name)
     local_file_path = os.path.join(local_path, file_name)
@@ -103,6 +102,8 @@ def setup_test_data_jr179():
     file_name = "JR179-D20080410-T150637.raw"
     return _setup_file(file_name)
 
+
+"""
 def _setup_file(file_name):
     test_data_path = os.path.join(TEST_DATA_FOLDER, file_name)
     FTP_MAIN = "ftp://ftp.bas.ac.uk"
@@ -114,6 +115,7 @@ def _setup_file(file_name):
         subprocess.run(["wget", ftp_file_path, "-O", test_data_path])
 
     return test_data_path
+"""
 
 
 # Separate Sv dataset fixtures for each file
@@ -143,8 +145,44 @@ def raw_dataset_jr179(setup_test_data_jr179):
     ed = _get_raw_dataset(setup_test_data_jr179)
     return ed
 
-def _get_sv_dataset(file_path):
-    ed = ep.open_raw(file_path, sonar_model="ek60")
-    Sv = ep.calibrate.compute_Sv(ed).compute()
-    return Sv
 
+@pytest.fixture(scope="session")
+def ed_ek_60_for_Sv():
+    bucket = "ncei-wcsd-archive"
+    base_path = "data/raw/Bell_M._Shimada/SH1707/EK60/"
+    filename = "Summer2017-D20170620-T011027.raw"
+    rawdirpath = base_path + filename
+
+    s3raw_fpath = f"s3://{bucket}/{rawdirpath}"
+    storage_opts = {"anon": True}
+    ed = ep.open_raw(s3raw_fpath, sonar_model="EK60", storage_options=storage_opts)  # type: ignore
+    return ed
+
+
+@pytest.fixture(scope="session")
+def ek60_Sv(ed_ek_60_for_Sv):
+    sv_echopype_EK60 = ep.calibrate.compute_Sv(ed_ek_60_for_Sv).compute()
+    return sv_echopype_EK60
+
+
+@pytest.fixture(scope="session")
+def sv_ek80():
+    base_url = "noaa-wcsd-pds.s3.amazonaws.com/"
+    path = "data/raw/Sally_Ride/SR1611/EK80/"
+    file_name = "D20161109-T163350.raw"
+
+    local_path = os.path.join(TEST_DATA_FOLDER, file_name)
+    if os.path.isfile(local_path):
+        ed = ep.open_raw(
+            local_path,
+            sonar_model="EK80",
+        )
+    else:
+        raw_file_address = base_url + path + file_name
+        rf = raw_file_address  # Path(raw_file_address)
+        ed = ep.open_raw(
+            f"https://{rf}",
+            sonar_model="EK80",
+        )
+    Sv = ep.calibrate.compute_Sv(ed, waveform_mode="CW", encode_mode="complex").compute()
+    return Sv

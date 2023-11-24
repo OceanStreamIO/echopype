@@ -579,11 +579,6 @@ def get_shoal_mask(
     mask: xr.DataArray
         A DataArray containing the mask for the Sv data. Regions satisfying the thresholding
         criteria are filled with ``True``, else the regions are filled with ``False``.
-    mask_: xr.DataArray
-        A DataArray containing the mask for areas in which shoals were searched.
-        Edge regions are filled with 'False', whereas the portion
-        in which shoals could be detected is 'True'
-
 
     Raises
     ------
@@ -630,10 +625,6 @@ def get_shoal_mask_multichannel(
             A DataArray containing the multichannel mask for the Sv data.
             Regions satisfying the thresholding criteria are filled with ``True``,
             else the regions are filled with ``False``.
-        mask_: xr.DataArray
-            A DataArray containing the multichannel mask for areas in which shoals were searched.
-            Edge regions are filled with 'False', whereas the portion
-            in which shoals could be detected is 'True'
 
 
     Raises
@@ -669,10 +660,9 @@ def get_seabed_mask(
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
     desired_channel: str - channel to generate the mask for
-    desired_freuency: int - desired frequency, in case the channel isn't directly specified
-    method: str with either "ariza", "experimental", "blackwell_mod",
-                                "blackwell", "deltaSv", "maxSv"
-                                based on the preferred method for seabed mask generation
+    desired_frequency: int - desired frequency, in case the channel isn't directly specified
+    method: str with either "ariza", "blackwell", based on the preferred method
+        for seabed mask generation
     Returns
     -------
     xr.DataArray
@@ -682,8 +672,7 @@ def get_seabed_mask(
     Raises
     ------
     ValueError
-        If neither "ariza", "experimental", "blackwell_mod",
-        "blackwell", "deltaSv", "maxSv" are given
+        If neither "ariza", "blackwell" are given
 
     Notes
     -----
@@ -696,11 +685,7 @@ def get_seabed_mask(
     source_Sv = get_dataset(source_Sv)
     mask_map = {
         "ariza": seabed._ariza,
-        "experimental": seabed._experimental,
         "blackwell": seabed._blackwell,
-        "blackwell_mod": seabed._blackwell_mod,
-        "delta_Sv": seabed._deltaSv,
-        "max_Sv": seabed._maxSv,
     }
 
     if method not in mask_map.keys():
@@ -729,9 +714,8 @@ def get_seabed_mask_multichannel(
         else it specifies the path to a zarr or netcdf file containing
         a Dataset. This input must correspond to a Dataset that has the
         coordinate ``channel`` and variables ``frequency_nominal`` and ``Sv``.
-    method: str with either "ariza", "experimental", "blackwell_mod",
-                                "blackwell", "deltaSv", "maxSv"
-                                based on the preferred method for seabed mask generation
+    method: str with either "ariza", "blackwell"
+             based on the preferred method for seabed mask generation
     Returns
     -------
     xr.DataArray
@@ -741,8 +725,7 @@ def get_seabed_mask_multichannel(
     Raises
     ------
     ValueError
-        If neither "ariza", "experimental", "blackwell_mod",
-        "blackwell", "deltaSv", "maxSv" are given
+        If neither "ariza" or "blackwell" are given
 
     Notes
     -----

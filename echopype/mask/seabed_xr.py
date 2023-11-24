@@ -37,10 +37,9 @@ import dask.array as da
 import numpy as np
 import xarray as xr
 from dask_image.ndfilters import convolve
-from dask_image.ndmeasure import label
 from dask_image.ndmorph import binary_dilation, binary_erosion
 
-from ..utils.mask_transformation_xr import dask_nanpercentile, line_to_square
+from ..utils.mask_transformation_xr import line_to_square
 
 MAX_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": (-40, -60)}
 DELTA_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": 20}
@@ -429,70 +428,6 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
     return mask
 
 
-def _aliased2seabed(
-    aliased, rlog, tpi, f, c=1500, rmax={18: 7000, 38: 2800, 70: 1100, 120: 850, 200: 550}
-):
-    """
-    Estimate true seabed, given the aliased seabed range. It might provide
-    a list of ranges, corresponding to seabed reflections from several pings
-    before, or provide an empty list if true seabed occurs within the logging
-    range or beyond the maximum detection range.
-
-    Args:
-      aliased (float): Range of aliased seabed (m).
-      rlog (float): Maximum logging range (m).
-      tpi (float): Transmit pulse interval (s).
-      f (int): Frequency (kHz).
-      c (int): Sound speed in seawater (m s-1). Defaults to 1500.
-      rmax (dict): Maximum seabed detection range per frequency. Defaults
-                   to {18:7000, 38:2800, 70:1100, 120:850, 200:550}.
-
-    Returns:
-        float: list with estimated seabed ranges, reflected from preceding
-        pings (ping -1, ping -2, ping -3, etc.).
-
-    """
-    ping = 0
-    seabed = 0
-    seabeds = []
-    while seabed <= rmax[f]:
-        ping = ping + 1
-        seabed = (c * tpi * ping) / 2 + aliased
-        if (seabed > rlog) & (seabed < rmax[f]):
-            seabeds.append(seabed)
-
-    return seabeds
-
-
-def _seabed2aliased(
-    seabed, rlog, tpi, f, c=1500, rmax={18: 7000, 38: 2800, 70: 1100, 120: 850, 200: 550}
-):
-    """
-    Estimate aliased seabed range, given the true seabed range. The answer will
-    be 'None' if true seabed occurs within the logging range or if it's beyond
-    the detection limit of the echosounder.
-
-    Args:
-        seabed (float): True seabed range (m).
-        rlog (float): Maximum logging range (m).
-        tpi (float): Transmit pulse interval (s).
-        f (int): frequency (kHz).
-        c (float): Sound speed in seawater (m s-1). Defaults to 1500.
-        rmax (dict): Maximum seabed detection range per frequency. Defaults
-                     to {18:7000, 38:2800, 70:1100, 120:850, 200:550}.
-
-    Returns:
-        float: Estimated range of aliased seabed (m
-
-    """
-    if (not seabed < rlog) and (not seabed > rmax[f]):
-        aliased = ((2 * seabed) % (c * tpi)) / 2
-    else:
-        aliased = None
-
-    return aliased
-
-
 def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX_SV_DEFAULT_PARAMS):
     """
     Detects and mask seabed using the split-beam angle and Sv, based in
@@ -523,119 +458,49 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
             + ", are: "
             + str(parameters.keys())
         )
-    r0 = parameters["r0"]
-    r1 = parameters["r1"]
-    tSv = parameters["tSv"]
+    # r0 = parameters["r0"]
+    # r1 = parameters["r1"]
+    # tSv = parameters["tSv"]
     ttheta = parameters["ttheta"]
     tphi = parameters["tphi"]
     wtheta = parameters["wtheta"]
     wphi = parameters["wphi"]
 
-    rlog = None
-    tpi = None
-    freq = None
-    rank = 50
-
-    if "rlog" in parameters.keys():
-        rlog = parameters["rlog"]
-    if "tpi" in parameters.keys():
-        tpi = parameters["tpi"]
-    if "freq" in parameters.keys():
-        freq = parameters["freq"]
-    if "rank" in parameters.keys():
-        rank = parameters["rank"]
-
-    channel_Sv = Sv_ds.sel(channel=desired_channel).drop("channel")
-    Sv = channel_Sv["Sv"]
-    r = channel_Sv["echo_range"][0]
+    channel_Sv = Sv_ds.sel(channel=desired_channel)
+    # Sv = channel_Sv["Sv"]
+    print(channel_Sv["angle_alongship"].max().item())
     theta = channel_Sv["angle_alongship"].copy() * 22 * 128 / 180
+    # print(theta)
+    print(theta.max())
     phi = channel_Sv["angle_athwartship"].copy() * 22 * 128 / 180
 
     dask_theta = da.asarray(theta, allow_unknown_chunksizes=False)
     dask_theta.compute_chunk_sizes()
-    theta.values = (
-        convolve(
-            dask_theta,
-            weights=da.ones(shape=(wtheta, wtheta), dtype=float) / wtheta**2,
-            mode="nearest",
-        )
-        ** 2
-    )
+    theta.values = convolve(
+        dask_theta,
+        weights=da.ones(shape=(wtheta, wtheta), dtype=float) / wtheta**2,
+        mode="nearest",
+    ).compute()
 
     dask_phi = da.asarray(phi, allow_unknown_chunksizes=False)
     dask_phi.compute_chunk_sizes()
-    phi.values = (
-        convolve(
-            dask_phi,
-            weights=da.ones(shape=(wphi, wphi), dtype=float) / wphi**2,
-            mode="nearest",
-        )
-        ** 2
-    )
+    phi.values = convolve(
+        dask_phi,
+        weights=da.ones(shape=(wphi, wphi), dtype=float) / wphi**2,
+        mode="nearest",
+    ).compute()
 
-    angle_mask = ~((theta > ttheta) | (phi > tphi)).compute()
+    angle_mask = ~((theta > ttheta) | (phi > tphi))
 
     if angle_mask.all():
         warnings.warn(
             "No aliased seabed detected in Theta & Phi. "
             "A default mask with all True values is returned."
         )
+        print("Oof")
         return angle_mask
-    # negate for further processing
-    angle_mask = ~angle_mask
 
-    # remove aliased seabed items when estimated True seabed can not be
-    # detected below the logging range
-    if (rlog is not None) and (tpi is not None) and (freq is not None):
-        items = label(angle_mask)
-        item_labels = np.unique(items)[1:]
-        for il in item_labels:
-            item = items == il
-            ritem = np.nanmean(r[np.where(item)[0]])
-            rseabed = _aliased2seabed(ritem, rlog, tpi, freq)
-            if rseabed == []:
-                angle_mask[item] = False
-
-        angle_mask = angle_mask & (Sv > tSv)
-
-    # calculate rank percentile Sv of angle-masked regions, and mask Sv above
-    Sv_masked = Sv.where(angle_mask)
-    anglemasked_threshold = dask_nanpercentile(Sv_masked.values, rank)
-
-    if np.isnan(anglemasked_threshold):
-        anglemasked_threshold = np.inf
-    if anglemasked_threshold < tSv:
-        anglemasked_threshold = tSv
-    Sv_threshold_mask = Sv > anglemasked_threshold
-
-    # create structure element that defines connections
-    structure = da.ones(shape=(3, 3), dtype=bool)
-    items = label(Sv_threshold_mask, structure)[0]
-
-    items_data = xr.DataArray(
-        items,
-        dims=angle_mask.dims,
-        coords=angle_mask.coords,
-    )
-
-    mask_items = items_data.where(angle_mask, 0)
-
-    # get items intercepted by angle mask
-    keep_items = np.unique(mask_items.values)
-    keep_items = keep_items[keep_items > 0]
-    angle_items = xr.where(items_data.isin(keep_items), items_data, 0)
-    angle_items_mask = ~(angle_items > 0)
-
-    mask = angle_items_mask
-
-    # apply range filter
-    # get upper and lower range indexes
-    up = abs(r - r0).argmin(dim="range_sample").item()
-    lw = abs(r - r1).argmin(dim="range_sample").item()
-
-    # get threshold mask with shallow and deep waters masked
-    range_filter = (mask["range_sample"] >= up) & (mask["range_sample"] <= lw)
-    mask = mask.where(range_filter, other=True)
-    mask.data = mask.data.compute()
+    mask = theta > ttheta
+    print(theta)
 
     return mask

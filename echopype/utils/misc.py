@@ -97,3 +97,4 @@ def frequency_nominal_to_channel(source_Sv, frequency_nominal: int):
     assert len(chan) == 1, "Frequency not uniquely identified"
     channel = chan[0]
     return channel
+
