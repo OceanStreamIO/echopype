@@ -98,10 +98,6 @@ def _weill(
     mask: xr.DataArray
         A DataArray containing the mask for the Sv data. Regions satisfying the thresholding
         criteria are filled with ``True``, else the regions are filled with ``False``.
-    mask_: xr.DataArray
-        A DataArray containing the mask for areas in which shoals were searched.
-        Edge regions are filled with 'False', whereas the portion in which shoals
-        could be detected is 'True'
     """
     parameter_names = ["thr", "maxvgap", "maxhgap", "minvlen", "minhlen", "dask_chunking"]
     if not all(name in parameters.keys() for name in parameter_names):
