@@ -579,11 +579,6 @@ def get_shoal_mask(
     mask: xr.DataArray
         A DataArray containing the mask for the Sv data. Regions satisfying the thresholding
         criteria are filled with ``True``, else the regions are filled with ``False``.
-    mask_: xr.DataArray
-        A DataArray containing the mask for areas in which shoals were searched.
-        Edge regions are filled with 'False', whereas the portion
-        in which shoals could be detected is 'True'
-
 
     Raises
     ------
@@ -630,10 +625,6 @@ def get_shoal_mask_multichannel(
             A DataArray containing the multichannel mask for the Sv data.
             Regions satisfying the thresholding criteria are filled with ``True``,
             else the regions are filled with ``False``.
-        mask_: xr.DataArray
-            A DataArray containing the multichannel mask for areas in which shoals were searched.
-            Edge regions are filled with 'False', whereas the portion
-            in which shoals could be detected is 'True'
 
 
     Raises
