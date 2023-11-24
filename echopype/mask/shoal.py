@@ -112,7 +112,6 @@ def _weill(
     maxhgap = parameters["maxhgap"]
     minvlen = parameters["minvlen"]
     minhlen = parameters["minhlen"]
-    dask_chunking = parameters["dask_chunking"]
 
     dask_chunking = parameters["dask_chunking"]
 
@@ -130,9 +129,7 @@ def _weill(
 
     # close shoal gaps smaller than the specified box
     if maxvgap > 0 and maxhgap > 0:
-        print("Closing\n")
         closing_array = da.ones(shape=(maxhgap, maxvgap), dtype=bool)
-        print("Before closing:", dask_mask.chunks)
         dask_mask = (
             binary_closing(
                 dask_mask,
@@ -146,7 +143,6 @@ def _weill(
     # drop shoals smaller than the specified box
 
     if minvlen > 0 and minhlen > 0:
-        print("Opening\n")
         opening_array = da.ones(shape=(minhlen, minvlen), dtype=bool)
         dask_mask = binary_opening(
             dask_mask,
