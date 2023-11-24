@@ -145,12 +145,6 @@ def raw_dataset_jr179(setup_test_data_jr179):
     return ed
 
 
-def _get_sv_dataset(file_path):
-    ed = ep.open_raw(file_path, sonar_model="ek60")
-    Sv = ep.calibrate.compute_Sv(ed).compute()
-    return Sv
-
-
 @pytest.fixture(scope="session")
 def ed_ek_60_for_Sv():
     bucket = "ncei-wcsd-archive"
