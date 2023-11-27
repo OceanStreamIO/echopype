@@ -38,6 +38,8 @@ import numpy as np
 import xarray as xr
 from dask_image.ndmorph import binary_dilation, binary_erosion
 
+from ..utils.mask_transformation_xr import line_to_square
+
 MAX_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": (-40, -60)}
 DELTA_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": 20}
 BLACKWELL_DEFAULT_PARAMS = {
@@ -90,6 +92,32 @@ ARIZA_ITERATIVE_DEFAULT_PARAMS = {
     "r1": 1000,
     "roff": 0,
     "thr": -40,
+    "ec": 1,
+    "ek": (3, 3),
+    "dc": 3,
+    "dk": (3, 3),
+    "s": 5,
+    "eac": 3,
+    "dac": 3,
+    "maximum_spike": 500,
+}
+
+ARIZA_EXPERIMENTAL_DEFAULT_PARAMS = {
+    "r0": 10,
+    "r1": 1000,
+    "roff": 0,
+    "thr": (-40, -70),
+    "ec": 1,
+    "ek": (3, 3),
+    "dc": 3,
+    "dk": (3, 3),
+}
+
+ARIZA_EXPERIMENTAL_ITERATIVE_DEFAULT_PARAMS = {
+    "r0": 10,
+    "r1": 1000,
+    "roff": 0,
+    "thr": (-40, -70),
     "ec": 1,
     "ek": (3, 3),
     "dc": 3,
@@ -279,10 +307,50 @@ def _create_range_mask(Sv_ds: xr.DataArray, desired_channel: str, thr: int, r0: 
 
 def _mask_down(mask: xr.DataArray):
     """
-    Given a seabed mask, masks all signal under the detected seabed,
+    Given a seabed mask, masks all signal under the detected seabed
+
+    Args:
+          mask (xr.DataArray): seabed mask
+
+    Returns:
+           xr.DataArray(mask with area under seabed masked)
     """
     seabed_depth = _get_seabed_range(mask)
     mask = (mask["range_sample"] <= seabed_depth).transpose()
+    return mask
+
+
+# move to utils and rewrite transient noise/fielding to use this once merged
+def _erase_floating_zeros(mask: xr.DataArray):
+    """
+    Given a boolean mask, turns back to True any "floating" False values,
+    e.g. not attached to the max range
+
+    Args:
+        mask: xr.DataArray - mask to remove floating values from
+
+    Returns:
+        xr.DataArray - mask with floating False values removed
+
+    """
+    flipped_mask = mask.isel(range_sample=slice(None, None, -1))
+    flipped_mask["range_sample"] = mask["range_sample"]
+    ft = len(flipped_mask.range_sample) - flipped_mask.argmax(dim="range_sample")
+
+    first_true_indices = xr.DataArray(
+        line_to_square(ft, mask, dim="range_sample").transpose(),
+        dims=("ping_time", "range_sample"),
+        coords={"ping_time": mask.ping_time, "range_sample": mask.range_sample},
+    )
+
+    indices = xr.DataArray(
+        line_to_square(mask["range_sample"], mask, dim="ping_time"),
+        dims=("ping_time", "range_sample"),
+        coords={"ping_time": mask.ping_time, "range_sample": mask.range_sample},
+    )
+    spike_mask = mask.where(indices > first_true_indices, True)
+
+    mask = spike_mask
     return mask
 
 
@@ -291,11 +359,20 @@ def _experimental_correction(mask: xr.DataArray, Sv: xr.DataArray, thr: int):
     Given an existing seabed mask, the single-channel dataset it was created on
     and a secondary, lower threshold, it builds the mask up until the Sv falls below the threshold
 
+    Args:
+          mask (xr.DataArray): seabed mask
+          Sv (xr.DataArray): single-channel Sv data the mask was build on
+          thr (int): secondary threshold
+
+    Returns:
+          xr.DataArray: mask with secondary threshold correction applied
+
     """
     secondary_mask = xr.where(Sv < thr, 1, 0).drop("channel")
     secondary_mask.fillna(1)
     fill_mask = secondary_mask & mask
-    return fill_mask
+    spike_mask = _erase_floating_zeros(fill_mask)
+    return spike_mask
 
 
 def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_DEFAULT_PARAMS):
@@ -315,6 +392,8 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
             r1 (int): maximum range above which the search will be performed (m).
             roff (int): seabed range offset (m).
             thr (int): Sv threshold above which seabed might occur (dB).
+                Can be a tuple, case in which a secondary experimental
+                thresholding correction is applied
             ec (int): number of erosion cycles.
             ek (int): 2-elements tuple with vertical and horizontal dimensions
                       of the erosion kernel.
@@ -327,7 +406,7 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
         xr.DataArray: A DataArray containing the mask for the Sv data.
             Regions satisfying the thresholding criteria are True, others are False
     """
-    parameter_names = ["r0", "r1", "roff", "thr", "ec", "ek", "dc", "dk"]
+    parameter_names = ["r0", "r1", "roff", "thr", "ec", "ek", "dc", "dk", "experimental"]
     if not all(name in parameters.keys() for name in parameter_names):
         raise ValueError(
             "Missing parameters - should be: "
@@ -342,6 +421,11 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
     ek = parameters["ek"]
     dc = parameters["dc"]
     dk = parameters["dk"]
+    secondary_thr = None
+
+    if isinstance(thr, int) is False:
+        secondary_thr = thr[1]
+        thr = thr[0]
 
     # create raw range and threshold mask, if no seabed is detected return empty
     raw = _create_range_mask(Sv_ds, desired_channel=desired_channel, thr=thr, r0=r0, r1=r1)
@@ -354,6 +438,10 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
 
     # mask areas under the detected seabed
     mask = _mask_down(mask)
+
+    # apply experimental correction, if specified
+    if secondary_thr is not None:
+        mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
 
     return mask
 
@@ -377,6 +465,8 @@ def _ariza_iterative(
             r1 (int): maximum range above which the search will be performed (m).
             roff (int): seabed range offset (m).
             thr (int): Sv threshold above which seabed might occur (dB).
+                Can be a tuple, case in which a secondary experimental
+                thresholding correction is applied
             ec (int): number of erosion cycles.
             ek (int): 2-elements tuple with vertical and horizontal dimensions
                           of the erosion kernel.
@@ -425,6 +515,11 @@ def _ariza_iterative(
     eac = parameters["eac"]
     dac = parameters["dac"]
     maximum_spike = parameters["maximum_spike"]
+    secondary_thr = None
+
+    if isinstance(thr, int) is False:
+        secondary_thr = thr[1]
+        thr = thr[0]
 
     # create raw range and threshold mask, if no seabed is detected return empty
     raw = _create_range_mask(Sv_ds, desired_channel=desired_channel, thr=thr, r0=r0, r1=r1)
@@ -439,5 +534,9 @@ def _ariza_iterative(
 
     # mask areas under the detected seabed
     mask = _mask_down(mask)
+
+    # apply experimental correction, if specified
+    if secondary_thr is not None:
+        mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
 
     return mask
