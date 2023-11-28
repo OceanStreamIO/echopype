@@ -36,6 +36,7 @@ import warnings
 import dask.array as da
 import numpy as np
 import xarray as xr
+from dask_image.ndfilters import convolve
 from dask_image.ndmorph import binary_dilation, binary_erosion
 
 from ..utils.mask_transformation_xr import line_to_square
@@ -43,8 +44,6 @@ from ..utils.mask_transformation_xr import line_to_square
 MAX_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": (-40, -60)}
 DELTA_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": 20}
 BLACKWELL_DEFAULT_PARAMS = {
-    "theta": None,
-    "phi": None,
     "r0": 10,
     "r1": 1000,
     "tSv": -75,
@@ -54,8 +53,6 @@ BLACKWELL_DEFAULT_PARAMS = {
     "wphi": 52,
 }
 BLACKWELL_MOD_DEFAULT_PARAMS = {
-    "theta": None,
-    "phi": None,
     "r0": 10,
     "r1": 1000,
     "tSv": -75,
@@ -87,19 +84,16 @@ ARIZA_DEFAULT_PARAMS = {
     "dk": (3, 3),
 }
 
-ARIZA_ITERATIVE_DEFAULT_PARAMS = {
+ARIZA_SPIKE_DEFAULT_PARAMS = {
     "r0": 10,
     "r1": 1000,
     "roff": 0,
-    "thr": -40,
+    "thr": (-40, -40),
     "ec": 1,
     "ek": (3, 3),
     "dc": 3,
     "dk": (3, 3),
-    "s": 5,
-    "eac": 3,
-    "dac": 3,
-    "maximum_spike": 500,
+    "maximum_spike": 200,
 }
 
 ARIZA_EXPERIMENTAL_DEFAULT_PARAMS = {
@@ -113,21 +107,6 @@ ARIZA_EXPERIMENTAL_DEFAULT_PARAMS = {
     "dk": (3, 3),
 }
 
-ARIZA_EXPERIMENTAL_ITERATIVE_DEFAULT_PARAMS = {
-    "r0": 10,
-    "r1": 1000,
-    "roff": 0,
-    "thr": (-40, -70),
-    "ec": 1,
-    "ek": (3, 3),
-    "dc": 3,
-    "dk": (3, 3),
-    "s": 5,
-    "eac": 3,
-    "dac": 3,
-    "maximum_spike": 500,
-}
-
 
 def _get_seabed_range(mask: xr.DataArray):
     """
@@ -139,6 +118,7 @@ def _get_seabed_range(mask: xr.DataArray):
     Returns:
         xr.DataArray: a ping_time-sized array containing the range_sample seabed depth,
         or max range_sample if no seabed is detected
+
     """
     seabed_depth = mask.argmax(dim="range_sample").compute()
     seabed_depth[seabed_depth == 0] = mask.range_sample.max().item()
@@ -195,52 +175,6 @@ def _erode_dilate(mask: xr.DataArray, ec: int, ek: int, dc: int, dk: int):
     """
     mask = _morpho(mask, "erosion", ec, ek)
     mask = _morpho(mask, "dilation", dc, dk)
-    return mask
-
-
-def _erode_dilate_iterative(
-    mask: xr.DataArray,
-    ec: int,
-    ek: int,
-    dc: int,
-    dk: int,
-    s: int,
-    eac: int,
-    dac: int,
-    maximum_spike: int,
-):
-    """
-    Given a preexisting 1/0 mask, run erosion and dilation cycles on it to remove noise
-    until no seabed spikes larger than a certain value can be found
-
-    Args:
-        mask (xr.DataArray): xr.DataArray with 1 and 0 data
-        ec (int): number of erosion cycles.
-        ek (int): 2-elements tuple with vertical and horizontal dimensions
-                      of the erosion kernel.
-
-        dc (int): number of dilation cycles.
-        dk (int): 2-elements tuple with vertical and horizontal dimensions
-                      of the dilation kernel.
-        s (int): additional iterations of the process
-        eac (int): number of erosion cycles to apply in the additional iteration
-        dac (int): number of erosion cycles to apply in the additional iteration
-        maximum_spike (int): maximum spike permitted
-
-    Returns:
-        xr.DataArray: A DataArray containing the denoised mask.
-            Regions satisfying the criteria are 1, others are 0
-    """
-    mask = _erode_dilate(mask, ec, ek, dc, dk)
-
-    for i in range(s):
-        seabed = _get_seabed_range(mask)
-        spike = -seabed.diff(dim="ping_time", n=1).min().item()
-        print(spike)
-        if spike < maximum_spike:
-            break
-        mask = _erode_dilate(mask, eac, ek, dac, dk)
-
     return mask
 
 
@@ -375,6 +309,43 @@ def _experimental_correction(mask: xr.DataArray, Sv: xr.DataArray, thr: int):
     return spike_mask
 
 
+def _cut_spikes(mask: xr.DataArray, maximum_spike: int):
+    """
+    In the Ariza seabed detecting method, large shoals can be falsely detected as
+    seabed. Their appearance on the seabed mask is large vertical "spikes".
+    We want to remove any such spikes from the dataset using maximum_spike
+    as a control parameter.
+
+    If this option is used, we also recommend applying the _experimental_correction,
+    even if with the same threshold as the initial threshold, to fill up any
+    imprecisions in the interpolated seabed
+
+    Args:
+        mask (xr.DataArray):
+        maximum_spike(int): maximum height, in range samples, acceptable before
+                            we start removing that data
+
+    Returns:
+        xr.DataArray: the corrected mask
+    """
+    int_mask = (~mask.copy()).astype(int)
+    seabed = _get_seabed_range(int_mask)
+    shifted_seabed = seabed.shift(ping_time=-1, fill_value=seabed[-1])
+    spike = seabed - shifted_seabed
+    spike_sign = xr.where(abs(spike) > maximum_spike, xr.where(spike > 0, 1, -1), 0)
+    spike_cs = spike_sign.cumsum(dim="ping_time")
+    # for i in spike:
+    #     print(i.item())
+
+    # mask spikes
+    nan_mask = xr.where(spike_cs > 0, np.nan, xr.where(spike_sign == -1, np.nan, mask))
+
+    # fill in with interpolated values from non-spikes
+    mask_interpolated = nan_mask.interpolate_na(dim="ping_time", method="nearest").astype(bool)
+
+    return mask_interpolated
+
+
 def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_DEFAULT_PARAMS):
     """
     Mask Sv above a threshold to get potential seabed features. These features
@@ -400,13 +371,17 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
             dc (int): number of dilation cycles.
             dk (int): 2-elements tuple with vertical and horizontal dimensions
                       of the dilation kernel.
+            maximum_spike(int): optional, if not None, used to determine the maximum
+                    allowed height of the "spikes" potentially created by
+                    dense shoals before masking them out. If used, applying
+                    a secondary threshold correction is recommended
 
 
     Returns:
         xr.DataArray: A DataArray containing the mask for the Sv data.
             Regions satisfying the thresholding criteria are True, others are False
     """
-    parameter_names = ["r0", "r1", "roff", "thr", "ec", "ek", "dc", "dk", "experimental"]
+    parameter_names = ["r0", "r1", "roff", "thr", "ec", "ek", "dc", "dk"]
     if not all(name in parameters.keys() for name in parameter_names):
         raise ValueError(
             "Missing parameters - should be: "
@@ -422,6 +397,9 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
     dc = parameters["dc"]
     dk = parameters["dk"]
     secondary_thr = None
+    maximum_spike = None
+    if "maximum_spike" in parameters.keys():
+        maximum_spike = parameters["maximum_spike"]
 
     if isinstance(thr, int) is False:
         secondary_thr = thr[1]
@@ -439,6 +417,10 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
     # mask areas under the detected seabed
     mask = _mask_down(mask)
 
+    # apply spike correction
+    if maximum_spike is not None:
+        mask = _cut_spikes(mask, maximum_spike)
+
     # apply experimental correction, if specified
     if secondary_thr is not None:
         mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
@@ -446,57 +428,29 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
     return mask
 
 
-def _ariza_iterative(
-    Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_ITERATIVE_DEFAULT_PARAMS
-):
+def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX_SV_DEFAULT_PARAMS):
     """
-    Mask Sv above a threshold to get potential seabed features. These features
-    are eroded first to get rid of fake seabeds (spikes, schools, etc.) and
-    dilated afterwards to fill in seabed breaches. Seabed detection is coarser
-    than other methods (it removes water nearby the seabed) but the seabed line
-    never drops when a breach occurs. Suitable for pelagic assessments and
-    reconmended for non-supervised processing.
+    Detects and mask seabed using the split-beam angle and Sv, based in
+    "Blackwell et al (2019), Aliased seabed detection in fisheries acoustic
+    data". Complete article here: https://arxiv.org/abs/1904.10736
 
     Args:
         Sv_ds (xr.DataArray): xr.DataArray with Sv data for multiple channels (dB)
         desired_channel(str): Name of the desired frequency channel
         parameters: parameter dict, should contain:
-            r0 (int): minimum range below which the search will be performed (m).
-            r1 (int): maximum range above which the search will be performed (m).
-            roff (int): seabed range offset (m).
-            thr (int): Sv threshold above which seabed might occur (dB).
-                Can be a tuple, case in which a secondary experimental
-                thresholding correction is applied
-            ec (int): number of erosion cycles.
-            ek (int): 2-elements tuple with vertical and horizontal dimensions
-                          of the erosion kernel.
-
-            dc (int): number of dilation cycles.
-            dk (int): 2-elements tuple with vertical and horizontal dimensions
-                          of the dilation kernel.
-            s (int): additional iterations of the process
-            eac (int): number of erosion cycles to apply in the additional iteration
-            dac (int): number of dilation cycles to apply in the additional iteration
-            maximum_spike (int): maximum spike permitted
+            r0 (int): minimum range below which the search will be performed (m)
+            r1 (int): maximum range above which the search will be performed (m)
+            tSv (float): Sv threshold above which seabed is pre-selected (dB)
+            ttheta (int): Theta threshold above which seabed is pre-selected (dB)
+            tphi (int): Phi threshold above which seabed is pre-selected (dB)
+            wtheta (int): window's size for mean square operation in Theta field
+            wphi (int): window's size for mean square operation in Phi field
 
     Returns:
         xr.DataArray: A DataArray containing the mask for the Sv data.
             Regions satisfying the thresholding criteria are True, others are False
     """
-    parameter_names = [
-        "r0",
-        "r1",
-        "roff",
-        "thr",
-        "ec",
-        "ek",
-        "dc",
-        "dk",
-        "s",
-        "eac",
-        "dac",
-        "maximum_spike",
-    ]
+    parameter_names = ["r0", "r1", "tSv", "ttheta", "tphi", "wtheta", "wphi"]
     if not all(name in parameters.keys() for name in parameter_names):
         raise ValueError(
             "Missing parameters - should be: "
@@ -504,39 +458,49 @@ def _ariza_iterative(
             + ", are: "
             + str(parameters.keys())
         )
-    r0 = parameters["r0"]
-    r1 = parameters["r1"]
-    thr = parameters["thr"]
-    ec = parameters["ec"]
-    ek = parameters["ek"]
-    dc = parameters["dc"]
-    dk = parameters["dk"]
-    s = parameters["s"]
-    eac = parameters["eac"]
-    dac = parameters["dac"]
-    maximum_spike = parameters["maximum_spike"]
-    secondary_thr = None
+    # r0 = parameters["r0"]
+    # r1 = parameters["r1"]
+    # tSv = parameters["tSv"]
+    ttheta = parameters["ttheta"]
+    tphi = parameters["tphi"]
+    wtheta = parameters["wtheta"]
+    wphi = parameters["wphi"]
 
-    if isinstance(thr, int) is False:
-        secondary_thr = thr[1]
-        thr = thr[0]
+    channel_Sv = Sv_ds.sel(channel=desired_channel)
+    # Sv = channel_Sv["Sv"]
+    print(channel_Sv["angle_alongship"].max().item())
+    theta = channel_Sv["angle_alongship"].copy() * 22 * 128 / 180
+    # print(theta)
+    print(theta.max())
+    phi = channel_Sv["angle_athwartship"].copy() * 22 * 128 / 180
 
-    # create raw range and threshold mask, if no seabed is detected return empty
-    raw = _create_range_mask(Sv_ds, desired_channel=desired_channel, thr=thr, r0=r0, r1=r1)
-    mask = raw["mask"]
-    if raw["ok"] is False:
-        return mask
+    dask_theta = da.asarray(theta, allow_unknown_chunksizes=False)
+    dask_theta.compute_chunk_sizes()
+    theta.values = convolve(
+        dask_theta,
+        weights=da.ones(shape=(wtheta, wtheta), dtype=float) / wtheta**2,
+        mode="nearest",
+    ).compute()
 
-    # run erosion and dilation denoising cycles
-    mask = _erode_dilate_iterative(
-        mask, ec=ec, ek=ek, dc=dc, dk=dk, eac=eac, dac=dac, s=s, maximum_spike=maximum_spike
-    )
+    dask_phi = da.asarray(phi, allow_unknown_chunksizes=False)
+    dask_phi.compute_chunk_sizes()
+    phi.values = convolve(
+        dask_phi,
+        weights=da.ones(shape=(wphi, wphi), dtype=float) / wphi**2,
+        mode="nearest",
+    ).compute()
 
-    # mask areas under the detected seabed
-    mask = _mask_down(mask)
+    angle_mask = ~((theta > ttheta) | (phi > tphi))
 
-    # apply experimental correction, if specified
-    if secondary_thr is not None:
-        mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
+    if angle_mask.all():
+        warnings.warn(
+            "No aliased seabed detected in Theta & Phi. "
+            "A default mask with all True values is returned."
+        )
+        print("Oof")
+        return angle_mask
+
+    mask = theta > ttheta
+    print(theta)
 
     return mask
