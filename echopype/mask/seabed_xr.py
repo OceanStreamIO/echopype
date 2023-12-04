@@ -470,7 +470,7 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     # Sv = channel_Sv["Sv"]
     print(channel_Sv["angle_alongship"].max().item())
     theta = channel_Sv["angle_alongship"].copy() * 22 * 128 / 180
-    # print(theta)
+    print(theta)
     print(theta.max())
     phi = channel_Sv["angle_athwartship"].copy() * 22 * 128 / 180
 
