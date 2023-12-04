@@ -759,3 +759,4 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
         mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
 
     return mask
+  

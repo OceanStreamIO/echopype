@@ -28,3 +28,4 @@ def test_mask_seabed(
     true_false_counts = (count_true, count_false)
 
     assert true_false_counts == expected_true_false_counts
+
