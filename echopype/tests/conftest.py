@@ -162,4 +162,3 @@ def ed_ek_60_for_Sv():
 def ek60_Sv(ed_ek_60_for_Sv):
     sv_echopype_EK60 = ep.calibrate.compute_Sv(ed_ek_60_for_Sv).compute()
     return sv_echopype_EK60
-
