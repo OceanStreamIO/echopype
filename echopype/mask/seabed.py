@@ -218,7 +218,7 @@ def _blackwell(
 
 
 def _blackwell_mod(
-    Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = BLACKWELL_DEFAULT_PARAMS
+    Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = BLACKWELL_MOD_DEFAULT_PARAMS
 ):
     """
     Detects and mask seabed using the split-beam angle and Sv, based in
@@ -759,4 +759,3 @@ def _ariza(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = ARIZA_D
         mask = _experimental_correction(mask, raw["Sv"], secondary_thr)
 
     return mask
-  
