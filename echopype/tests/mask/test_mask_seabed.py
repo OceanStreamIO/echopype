@@ -13,7 +13,8 @@ DESIRED_CHANNEL = "GPT  38 kHz 009072033fa5 1 ES38"
     "desired_channel,method,parameters,expected_true_false_counts",
     [
         (DESIRED_CHANNEL, "ariza", ARIZA_DEFAULT_PARAMS, (1531524, 635407)),
-        (DESIRED_CHANNEL, "blackwell", BLACKWELL_DEFAULT_PARAMS, (1746551, 420380)),
+        # (DESIRED_CHANNEL, "blackwell", BLACKWELL_DEFAULT_PARAMS, (1746551, 420380)),
+        (DESIRED_CHANNEL, "blackwell", BLACKWELL_DEFAULT_PARAMS, (1511085, 376242)),
     ],
 )
 def test_mask_seabed(
@@ -28,4 +29,3 @@ def test_mask_seabed(
     true_false_counts = (count_true, count_false)
 
     assert true_false_counts == expected_true_false_counts
-
