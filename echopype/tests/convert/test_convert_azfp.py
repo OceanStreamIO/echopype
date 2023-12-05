@@ -255,4 +255,3 @@ def test_load_parse_azfp_xml(azfp_path):
     assert parseAZFP.parameters['pulse_len_phase2'] == [0, 0, 0, 0]
     assert parseAZFP.parameters['range_samples_phase1'] == [8273, 8273, 8273, 8273]
     assert parseAZFP.parameters['range_samples_phase2'] == [2750, 2750, 2750, 2750]
-
