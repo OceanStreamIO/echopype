@@ -35,14 +35,11 @@ import warnings
 
 import dask.array as da
 import numpy as np
-import scipy.ndimage as nd_img
 import xarray as xr
 from dask_image.ndfilters import convolve
 from dask_image.ndmeasure import label
 from dask_image.ndmorph import binary_dilation, binary_erosion
-from scipy.signal import convolve2d
 
-from ..utils.mask_transformation import lin, log
 from ..utils.mask_transformation_xr import line_to_square
 
 MAX_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": (-40, -60)}
@@ -548,104 +545,3 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     range_filter = (mask["range_sample"] >= up) & (mask["range_sample"] <= lw)
     mask = mask.where(range_filter, other=True)
     return mask
-
-
-def _blackwell_old(
-    Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = BLACKWELL_DEFAULT_PARAMS
-):
-    parameter_names = ["r0", "r1", "tSv", "ttheta", "tphi", "wtheta", "wphi"]
-    if not all(name in parameters.keys() for name in parameter_names):
-        raise ValueError(
-            "Missing parameters - should be: "
-            + str(parameter_names)
-            + ", are: "
-            + str(parameters.keys())
-        )
-    r0 = parameters["r0"]
-    r1 = parameters["r1"]
-    tSv = parameters["tSv"]
-    ttheta = parameters["ttheta"]
-    tphi = parameters["tphi"]
-    wtheta = parameters["wtheta"]
-    wphi = parameters["wphi"]
-
-    channel_Sv = Sv_ds.sel(channel=desired_channel)
-    Sv = channel_Sv["Sv"].values.T
-    r = Sv_ds["echo_range"].values[0, 0]
-    theta = channel_Sv["angle_alongship"].values.T
-    phi = channel_Sv["angle_athwartship"].values.T
-    # apply reverse correction on theta & phi to match Blackwell's constants
-    theta = theta * 22 * 128 / 180
-    phi = phi * 22 * 128 / 180
-
-    # delimit the analysis within user-defined range limits
-    r0 = np.nanargmin(abs(r - r0))
-    r1 = np.nanargmin(abs(r - r1)) + 1
-    Svchunk = Sv[r0:r1, :]
-    thetachunk = theta[r0:r1, :]
-    phichunk = phi[r0:r1, :]
-
-    # get blur kernels with theta & phi width dimensions
-    ktheta = np.ones((wtheta, wtheta)) / wtheta**2
-    kphi = np.ones((wphi, wphi)) / wphi**2
-
-    # perform mean square convolution and mask if above theta & phi thresholds
-    thetamaskchunk = convolve2d(thetachunk, ktheta, "same", boundary="symm") ** 2 > ttheta
-    phimaskchunk = convolve2d(phichunk, kphi, "same", boundary="symm") ** 2 > tphi
-    anglemaskchunk = thetamaskchunk | phimaskchunk
-
-    if True:
-        above = np.zeros((r0, Svchunk.shape[1]), dtype=bool)
-        below = np.zeros((len(r) - r1, Svchunk.shape[1]), dtype=bool)
-        mask = np.r_[above, anglemaskchunk, below]
-
-        mask = np.logical_not(mask.T)
-        return_mask = xr.DataArray(
-            mask,
-            dims=("ping_time", "range_sample"),
-            coords={"ping_time": channel_Sv.ping_time, "range_sample": channel_Sv.range_sample},
-        )
-        return return_mask
-
-    # if aliased seabed, mask Sv above the Sv median of angle-masked regions
-    if anglemaskchunk.any():
-        Svmedian_anglemasked = log(np.nanmedian(lin(Svchunk[anglemaskchunk])))
-        if np.isnan(Svmedian_anglemasked):
-            Svmedian_anglemasked = np.inf
-        if Svmedian_anglemasked < tSv:
-            Svmedian_anglemasked = tSv
-        Svmaskchunk = Svchunk > Svmedian_anglemasked
-
-        # label connected items in Sv mask
-        items = nd_img.label(Svmaskchunk, nd_img.generate_binary_structure(2, 2))[0]
-
-        # get items intercepted by angle mask (likely, the seabed)
-        intercepted = list(set(items[anglemaskchunk]))
-        if 0 in intercepted:
-            intercepted.remove(intercepted == 0)
-
-        # combine angle-intercepted items in a single mask
-        maskchunk = np.zeros(Svchunk.shape, dtype=bool)
-        for i in intercepted:
-            maskchunk = maskchunk | (items == i)
-
-        # add data above r0 and below r1 (removed in first step)
-        above = np.zeros((r0, maskchunk.shape[1]), dtype=bool)
-        below = np.zeros((len(r) - r1, maskchunk.shape[1]), dtype=bool)
-        mask = np.r_[above, maskchunk, below]
-
-    # give empty mask if aliased-seabed was not detected in Theta & Phi
-    else:
-        warnings.warn(
-            "No aliased seabed detected in Theta & Phi. "
-            "A default mask with all True values is returned."
-        )
-        mask = np.zeros_like(Sv, dtype=bool)
-
-    mask = np.logical_not(mask.T)
-    return_mask = xr.DataArray(
-        mask,
-        dims=("ping_time", "range_sample"),
-        coords={"ping_time": channel_Sv.ping_time, "range_sample": channel_Sv.range_sample},
-    )
-    return return_mask
