@@ -86,7 +86,7 @@ def depth_from_pressure(
     depth = depth_w_g / gravity
     return depth
 
-  
+
 def frequency_nominal_to_channel(source_Sv, frequency_nominal: int):
     """
     Given a value for a nominal frequency, returns the channel associated with it

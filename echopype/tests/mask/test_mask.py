@@ -917,13 +917,13 @@ def test_apply_mask(
     ("source_has_ch", "mask_has_ch"),
     [
         (True, True),
-        (False, True),
+        # (False, True),
         (True, False),
         (False, False),
     ],
     ids=[
         "source_with_ch_mask_with_ch",
-        "source_no_ch_mask_with_ch",
+        # "source_no_ch_mask_with_ch", not a use case that makes sense anymore
         "source_with_ch_mask_no_ch",
         "source_no_ch_mask_no_ch",
     ],
@@ -933,11 +933,8 @@ def test_apply_mask_channel_variation(source_has_ch, mask_has_ch):
     var_name = "var1"
 
     if mask_has_ch:
-        mask = xr.DataArray(
-            np.array([np.identity(2)]),
-            coords={"channel": ["chA"], "ping_time": np.arange(2), "range_sample": np.arange(2)},
-            attrs={"long_name": "mask_with_channel"},
-        )
+        mask = create_channel_input_mask(source_ds.coords)
+        mask = mask.assign_attrs(long_name="mask_with_channel")
     else:
         mask = xr.DataArray(
             np.identity(2),
@@ -954,8 +951,17 @@ def test_apply_mask_channel_variation(source_has_ch, mask_has_ch):
 
     # Output dimension will be the same as source
     if source_has_ch:
+        input_array = np.array([[[1, np.nan], [np.nan, 1]]] * 3)
+        if mask_has_ch:
+            input_array = np.array(
+                [
+                    [[1, np.nan], [np.nan, np.nan]],
+                    [[np.nan, np.nan], [np.nan, np.nan]],
+                    [[np.nan, np.nan], [np.nan, np.nan]],
+                ]
+            )
         truth_da = xr.DataArray(
-            np.array([[[1, np.nan], [np.nan, 1]]] * 3),
+            input_array,
             coords={
                 "channel": ["chan1", "chan2", "chan3"],
                 "ping_time": np.arange(2),
@@ -971,6 +977,50 @@ def test_apply_mask_channel_variation(source_has_ch, mask_has_ch):
         )
 
     assert masked_ds[var_name].equals(truth_da)
+
+
+def create_channel_input_mask(coords):
+    """
+    Creates a per-channel input mask, given an existing data array's coords
+
+    Parameters
+    ==========
+    coords - coordinates of the xr.DataArray we want to create a mask for
+
+    Returns
+    =======
+    mask (xr.DataArray) - a mask with the same coords as the input,
+        with all values = False except the first one on the first channel,
+        which is True
+    """
+    dim_array = []
+    for k in coords.keys():
+        dim_array.append(len(coords[k]))
+    mask_data = np.full(shape=dim_array, fill_value=False, dtype=bool)
+    mask_data.put(0, True)  # so we have differences between channels
+    mask = xr.DataArray(data=mask_data, coords=coords, name="mask_chan")
+    return mask
+
+
+def test_channel_mask(var_name="var2"):
+    """
+    Tests that a multichannel mask can be applied to a multichannel array
+    """
+    dataset = get_mock_source_ds_apply_mask(2, 2, False)
+    mask = create_channel_input_mask(dataset.coords)
+    masked = ep.mask.api.apply_mask(dataset, mask, var_name=var_name, fill_value=0)
+    t2 = masked["var2"].values
+    check_mask = mask.values * 1
+    compare = (t2 == check_mask).all()
+    assert compare
+
+
+def test_shoal_mask_all(sv_dataset_jr161):
+    source_Sv = sv_dataset_jr161
+    ml = echopype.mask.api.get_shoal_mask_multichannel(
+        source_Sv, method="will", parameters=ep.mask.shoal.WEILL_DEFAULT_PARAMETERS
+    )
+    assert np.all(ml["channel"] == source_Sv["channel"])
 
 
 def test_seabed_mask_all(complete_dataset_jr179):

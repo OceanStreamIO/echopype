@@ -134,6 +134,7 @@ def dask_nanmean(array, axis=None):
     return da.nanmean(array, axis=axis)
 
 
+
 def dask_nanpercentile(array, percentile, axis=None):
     """
     Applies nanpercentile on a Dask array
@@ -143,3 +144,4 @@ def dask_nanpercentile(array, percentile, axis=None):
             raise TypeError("Expected a Dask or Numpy array, got {}.".format(type(array)))
         return np.nanpercentile(array, percentile, axis=axis)
     return da.percentile(array, percentile, axis=axis, skipna=True)
+
