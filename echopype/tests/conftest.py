@@ -2,7 +2,6 @@
 from ftplib import FTP
 
 import os
-import subprocess
 import pytest
 
 import xarray as xr
@@ -103,7 +102,7 @@ def setup_test_data_jr179():
     file_name = "JR179-D20080410-T150637.raw"
     return _setup_file(file_name)
 
-  
+
 """
 def _setup_file(file_name):
     test_data_path = os.path.join(TEST_DATA_FOLDER, file_name)
