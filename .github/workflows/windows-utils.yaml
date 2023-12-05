@@ -11,7 +11,7 @@ on:
 
 env:
   CONDA_ENV: echopype
-  TEST_DATA_FOLDER: ${{ github.workspace }}\\echopype\\test_data
+  TEST_DATA_FOLDER: ${{ github.workspace }}\\test_data
 
 jobs:
   windows-test:
@@ -68,14 +68,19 @@ jobs:
         # Add steps for downloading and unzipping test data
         - name: Create Test Data Directory
           run: New-Item -ItemType Directory -Force -Path ${{ env.TEST_DATA_FOLDER }}
-
+        - name: Install wget
+          run: choco install wget
+          shell: powershell
+        #- name: Download Test Data from Google Drive
+        #  run: |
+        #    $downloadLink = "https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
+        #    $downloadPage = Invoke-WebRequest -Uri $downloadLink -OutFile "download.html"
+        #    $confirmCode = (Select-String -Path "download.html" -Pattern 'confirm=([0-9A-Za-z_]+)' -AllMatches).Matches.Groups[1].Value
+        #    $downloadFileLink = "https://drive.google.com/uc?export=download&confirm=$confirmCode&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
+        #    Invoke-WebRequest -Uri $downloadFileLink -OutFile "test_data.zip"
         - name: Download Test Data from Google Drive
           run: |
-            $downloadLink = "https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
-            $downloadPage = Invoke-WebRequest -Uri $downloadLink -OutFile "download.html"
-            $confirmCode = (Select-String -Path "download.html" -Pattern 'confirm=([0-9A-Za-z_]+)' -AllMatches).Matches.Groups[1].Value
-            $downloadFileLink = "https://drive.google.com/uc?export=download&confirm=$confirmCode&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
-            Invoke-WebRequest -Uri $downloadFileLink -OutFile "test_data.zip"
+            wget --load-cookies /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8" -O test_data.zip && rm -rf /tmp/cookies.txt
 
         - name: Unzip Test Data
           run: Expand-Archive -LiteralPath "test_data.zip" -DestinationPath ${{ env.TEST_DATA_FOLDER }} -Force
