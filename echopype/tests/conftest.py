@@ -103,7 +103,7 @@ def setup_test_data_jr179():
     file_name = "JR179-D20080410-T150637.raw"
     return _setup_file(file_name)
 
-
+"""
 def _setup_file(file_name):
     test_data_path = os.path.join(TEST_DATA_FOLDER, file_name)
     FTP_MAIN = "ftp://ftp.bas.ac.uk"
@@ -115,7 +115,7 @@ def _setup_file(file_name):
         subprocess.run(["wget", ftp_file_path, "-O", test_data_path])
 
     return test_data_path
-
+"""
 
 # Separate Sv dataset fixtures for each file
 @pytest.fixture(scope="session")
