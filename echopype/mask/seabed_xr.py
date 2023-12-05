@@ -40,7 +40,7 @@ from dask_image.ndfilters import convolve
 from dask_image.ndmeasure import label
 from dask_image.ndmorph import binary_dilation, binary_erosion
 
-from ..utils.mask_transformation_xr import line_to_square
+from ..utils.mask_transformation_xr import dask_nanpercentile, line_to_square
 
 MAX_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": (-40, -60)}
 DELTA_SV_DEFAULT_PARAMS = {"r0": 10, "r1": 1000, "roff": 0, "thr": 20}
@@ -467,6 +467,22 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     wtheta = parameters["wtheta"]
     wphi = parameters["wphi"]
 
+    rlog = None
+    tpi = None
+    freq = None
+    rank = 50
+
+    if "rlog" in parameters.keys():
+        rlog = parameters["rlog"]
+    if "tpi" in parameters.keys():
+        tpi = parameters["tpi"]
+    if "freq" in parameters.keys():
+        freq = parameters["freq"]
+    if "rank" in parameters.keys():
+        rank = parameters["rank"]
+
+    print(rlog, tpi, freq, rank)
+
     channel_Sv = Sv_ds.sel(channel=desired_channel)
     Sv = channel_Sv["Sv"]
     r = channel_Sv["echo_range"][0]
@@ -506,15 +522,16 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     # negate for further processing
     angle_mask = ~angle_mask
 
-    # calculate median Sv of angle-masked regions, and mask Sv above
+    # calculate rank percentile Sv of angle-masked regions, and mask Sv above
     Sv_masked = Sv.where(angle_mask)
-    Sv_median_anglemasked = Sv_masked.median(skipna=True).item()
+    # anglemasked_threshold = Sv_masked.median(skipna=True).item()
+    anglemasked_threshold = dask_nanpercentile(Sv_masked.values, rank)
 
-    if np.isnan(Sv_median_anglemasked):
-        Sv_median_anglemasked = np.inf
-    if Sv_median_anglemasked < tSv:
-        Sv_median_anglemasked = tSv
-    Sv_threshold_mask = Sv > Sv_median_anglemasked
+    if np.isnan(anglemasked_threshold):
+        anglemasked_threshold = np.inf
+    if anglemasked_threshold < tSv:
+        anglemasked_threshold = tSv
+    Sv_threshold_mask = Sv > anglemasked_threshold
 
     # create structure element that defines connections
     structure = da.ones(shape=(3, 3), dtype=bool)
