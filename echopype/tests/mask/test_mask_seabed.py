@@ -3,7 +3,11 @@ import pytest
 from echopype.mask.api import get_seabed_mask
 from echopype.mask.seabed import (
     ARIZA_DEFAULT_PARAMS,
+    ARIZA_SPIKE_DEFAULT_PARAMS,
+    ARIZA_EXPERIMENTAL_DEFAULT_PARAMS,
     BLACKWELL_DEFAULT_PARAMS,
+    BLACKWELL_MOD_DEFAULT_PARAMS,
+
 )
 
 DESIRED_CHANNEL = "GPT  38 kHz 009072033fa5 1 ES38"
@@ -13,7 +17,10 @@ DESIRED_CHANNEL = "GPT  38 kHz 009072033fa5 1 ES38"
     "desired_channel,method,parameters,expected_true_false_counts",
     [
         (DESIRED_CHANNEL, "ariza", ARIZA_DEFAULT_PARAMS, (1531524, 635407)),
-        (DESIRED_CHANNEL, "blackwell", BLACKWELL_DEFAULT_PARAMS, (1746551, 420380)),
+        (DESIRED_CHANNEL, "ariza", ARIZA_SPIKE_DEFAULT_PARAMS, (1531514, 635417)),
+        (DESIRED_CHANNEL, "ariza", ARIZA_EXPERIMENTAL_DEFAULT_PARAMS, (1524807, 642124)),
+        (DESIRED_CHANNEL, "blackwell", BLACKWELL_DEFAULT_PARAMS, (1738163, 428768)),
+        (DESIRED_CHANNEL, "blackwell", BLACKWELL_MOD_DEFAULT_PARAMS, (1738163, 428768)),
     ],
 )
 def test_mask_seabed(

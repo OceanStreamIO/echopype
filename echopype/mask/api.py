@@ -643,7 +643,6 @@ def get_shoal_mask_multichannel(
     return mask
 
 
-
 def get_seabed_mask(
     source_Sv: Union[xr.Dataset, str, pathlib.Path],
     parameters: dict,

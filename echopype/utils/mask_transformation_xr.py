@@ -132,3 +132,16 @@ def dask_nanmean(array, axis=None):
     if not isinstance(array, da.Array):
         raise TypeError("Expected a Dask array, got {}.".format(type(array)))
     return da.nanmean(array, axis=axis)
+
+
+
+def dask_nanpercentile(array, percentile, axis=None):
+    """
+    Applies nanpercentile on a Dask array
+    """
+    if not isinstance(array, da.Array):
+        if not isinstance(array, np.ndarray):
+            raise TypeError("Expected a Dask or Numpy array, got {}.".format(type(array)))
+        return np.nanpercentile(array, percentile, axis=axis)
+    return da.percentile(array, percentile, axis=axis, skipna=True)
+
