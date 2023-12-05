@@ -11,7 +11,7 @@ on:
 
 env:
   CONDA_ENV: echopype
-  TEST_DATA_FOLDER: ${{ github.workspace }}/echopype/test_data
+  TEST_DATA_FOLDER: ${{ github.workspace }}\\echopype\\test_data
 
 jobs:
   windows-test:
@@ -71,11 +71,21 @@ jobs:
 
         - name: Download Test Data from Google Drive
           run: |
-              Invoke-WebRequest -Uri "https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8" -OutFile "test_data.zip"
+            $response = Invoke-WebRequest -Uri "https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8" -OutFile "test_data.zip" -PassThru
+            if ($response.StatusCode -ne 200) {
+              Write-Error "File download failed with status code $($response.StatusCode)"
+              exit 1
+            }
 
         - name: Unzip Test Data
-          run: Expand-Archive -LiteralPath "test_data.zip" -DestinationPath ${{ env.TEST_DATA_FOLDER }} -Force
-
+          run: |
+            try {
+              Expand-Archive -LiteralPath "test_data.zip" -DestinationPath ${{ env.TEST_DATA_FOLDER }} -Force
+            }
+            catch {
+              Write-Error "Failed to unzip file: $_"
+              exit 1
+            }
         - name: Running all Tests
           run: |
             pytest -vvv -rx --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings echopype/tests/utils |& tee ci_${{ matrix.python-version }}_test_log.log
