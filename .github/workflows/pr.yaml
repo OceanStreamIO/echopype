@@ -6,7 +6,7 @@ on:
 
 env:
   NUM_WORKERS: 2
-  TEST_DATA_FOLDER: ${{ github.workspace }}/echopype/echopype/test_data
+  TEST_DATA_FOLDER: ${{ github.workspace }}/test_data
 
 jobs:
   test:
