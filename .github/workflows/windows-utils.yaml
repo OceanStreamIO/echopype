@@ -72,10 +72,10 @@ jobs:
         - name: Download Test Data from Google Drive
           run: |
             $downloadLink = "https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
-            $downloadPage = curl -L $downloadLink -o download.html
-            $confirmCode = (Select-String -Path download.html -Pattern 'confirm=([0-9A-Za-z_]+)' -AllMatches).Matches.Groups[1].Value
+            $downloadPage = Invoke-WebRequest -Uri $downloadLink -OutFile "download.html"
+            $confirmCode = (Select-String -Path "download.html" -Pattern 'confirm=([0-9A-Za-z_]+)' -AllMatches).Matches.Groups[1].Value
             $downloadFileLink = "https://drive.google.com/uc?export=download&confirm=$confirmCode&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8"
-            curl -L $downloadFileLink -o test_data.zip
+            Invoke-WebRequest -Uri $downloadFileLink -OutFile "test_data.zip"
 
         - name: Unzip Test Data
           run: Expand-Archive -LiteralPath "test_data.zip" -DestinationPath ${{ env.TEST_DATA_FOLDER }} -Force
