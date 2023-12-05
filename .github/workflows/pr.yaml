@@ -6,6 +6,7 @@ on:
 
 env:
   NUM_WORKERS: 2
+  TEST_DATA_FOLDER: ${{ github.workspace }}/echopype/echopype/test_data
 
 jobs:
   test:
@@ -62,6 +63,11 @@ jobs:
 
           # Check data endpoint
           curl http://localhost:8080/data/
+      # Add the following steps for downloading and unzipping test data
+      - name: Download Test Data from Google Drive
+        run: |
+          wget --load-cookies /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://drive.google.com/uc?export=download&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1ofiSQ4zDwXfHE65tow4_jDIceBYHNW_8" -O test_data.zip && rm -rf /tmp/cookies.txt
+          unzip -n test_data.zip -d ${{ env.TEST_DATA_FOLDER }}
       - name: Finding changed files
         id: files
         uses: Ana06/get-changed-files@v2.2.0
