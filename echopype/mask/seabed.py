@@ -545,9 +545,7 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     if "rank" in parameters.keys():
         rank = parameters["rank"]
 
-    print(rlog, tpi, freq, rank)
-
-    channel_Sv = Sv_ds.sel(channel=desired_channel)
+    channel_Sv = Sv_ds.sel(channel=desired_channel).drop("channel")
     Sv = channel_Sv["Sv"]
     r = channel_Sv["echo_range"][0]
     theta = channel_Sv["angle_alongship"].copy() * 22 * 128 / 180
@@ -640,4 +638,3 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     range_filter = (mask["range_sample"] >= up) & (mask["range_sample"] <= lw)
     mask = mask.where(range_filter, other=True)
     return mask
-  
