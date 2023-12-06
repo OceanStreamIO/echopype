@@ -600,7 +600,6 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
 
     # calculate rank percentile Sv of angle-masked regions, and mask Sv above
     Sv_masked = Sv.where(angle_mask)
-    # anglemasked_threshold = Sv_masked.median(skipna=True).item()
     anglemasked_threshold = dask_nanpercentile(Sv_masked.values, rank)
 
     if np.isnan(anglemasked_threshold):
@@ -637,4 +636,6 @@ def _blackwell(Sv_ds: xr.DataArray, desired_channel: str, parameters: dict = MAX
     # get threshold mask with shallow and deep waters masked
     range_filter = (mask["range_sample"] >= up) & (mask["range_sample"] <= lw)
     mask = mask.where(range_filter, other=True)
+    mask.data = mask.data.compute()
+
     return mask
