@@ -3,7 +3,6 @@ import pytest
 import numpy as np
 import echopype.clean
 from echopype.clean.transient_noise import RYAN_DEFAULT_PARAMS, FIELDING_DEFAULT_PARAMS
-import datetime
 
 # Note: We've removed all the setup and utility functions since they are now in conftest.py
 
