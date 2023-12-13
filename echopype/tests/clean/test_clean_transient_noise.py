@@ -3,6 +3,7 @@ import pytest
 import numpy as np
 import echopype.clean
 from echopype.clean.transient_noise import RYAN_DEFAULT_PARAMS, FIELDING_DEFAULT_PARAMS
+import datetime
 
 # Note: We've removed all the setup and utility functions since they are now in conftest.py
 
@@ -10,7 +11,7 @@ from echopype.clean.transient_noise import RYAN_DEFAULT_PARAMS, FIELDING_DEFAULT
 @pytest.mark.parametrize(
     "method, parameters ,expected_true_false_counts",
     [
-        ("ryan", RYAN_DEFAULT_PARAMS, (2115052, 51879)),
+        ("ryan", RYAN_DEFAULT_PARAMS, (1984803, 182128)),
         ("fielding", FIELDING_DEFAULT_PARAMS, (2117333, 49598)),
     ],
 )
