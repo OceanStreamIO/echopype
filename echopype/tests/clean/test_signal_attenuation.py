@@ -2,8 +2,7 @@ import pytest
 import numpy as np
 import echopype.clean
 
-
-DEFAULT_RYAN_PARAMS = {"r0": 180, "r1": 280, "n": 30, "thr": -6, "start": 0}
+from echopype.clean.signal_attenuation import DEFAULT_RYAN_PARAMS
 
 # commented ariza out since the current interpretation relies on a
 # preexisting seabed mask, which is not available in this PR
