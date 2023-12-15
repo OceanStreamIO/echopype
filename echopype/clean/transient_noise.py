@@ -234,10 +234,6 @@ def _fielding(
     ping_75q = Sv_range.reduce(np.nanpercentile, q=75, dim="range_sample")
     block_median = rolling_median_block(Sv_range.data, window_half_size=n, axis=0)
 
-    # shifted_arrays = [Sv_range.shift(ping_time=i) for i in range(-n, n + 1)]
-    # block = xr.concat(shifted_arrays, dim="shifted_ping_time")
-    # block_median = block.median(dim=["range_sample", "shifted_ping_time"], skipna=True)
-
     # identify columns in which noise can be found
     noise_col = (ping_75q < maxts) & ((ping_median - block_median) < thr[0])
     noise_column = noise_col.compute()
