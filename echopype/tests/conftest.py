@@ -163,3 +163,26 @@ def ed_ek_60_for_Sv():
 def ek60_Sv(ed_ek_60_for_Sv):
     sv_echopype_EK60 = ep.calibrate.compute_Sv(ed_ek_60_for_Sv).compute()
     return sv_echopype_EK60
+
+
+@pytest.fixture(scope="session")
+def sv_ek80():
+    base_url = "noaa-wcsd-pds.s3.amazonaws.com/"
+    path = "data/raw/Sally_Ride/SR1611/EK80/"
+    file_name = "D20161109-T163350.raw"
+
+    local_path = os.path.join(TEST_DATA_FOLDER, file_name)
+    if os.path.isfile(local_path):
+        ed = ep.open_raw(
+            local_path,
+            sonar_model="EK80",
+        )
+    else:
+        raw_file_address = base_url + path + file_name
+        rf = raw_file_address  # Path(raw_file_address)
+        ed = ep.open_raw(
+            f"https://{rf}",
+            sonar_model="EK80",
+        )
+    Sv = ep.calibrate.compute_Sv(ed, waveform_mode="CW", encode_mode="complex").compute()
+    return Sv
