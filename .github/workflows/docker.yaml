@@ -1,8 +1,8 @@
 name: Build Docker Images
 
 on:
-  schedule:
-    - cron: '0 0 * * *' # Run Daily
+  #schedule:
+  #  - cron: '0 0 * * *' # Run Daily
   workflow_dispatch:
 
 env:
