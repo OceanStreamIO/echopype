@@ -174,7 +174,7 @@ class SetGroupsEK80(SetGroupsBase):
                     (
                         self.parser_obj.environment["sound_velocity_profile"][::2]
                         if "sound_velocity_profile" in self.parser_obj.environment
-                        else [np.nan]
+                        else []
                     ),
                     {
                         "standard_name": "depth",
@@ -1128,6 +1128,9 @@ class SetGroupsEK80(SetGroupsBase):
         ]
 
         # Assemble dataset for ping-invariant params
+        ds_invariant_power = None
+        ds_invariant_complex = None
+
         if self.sorted_channel["complex"]:
             ds_invariant_complex = self._assemble_ds_ping_invariant(params, "complex")
         if self.sorted_channel["power"]:
@@ -1167,11 +1170,12 @@ class SetGroupsEK80(SetGroupsBase):
         #   and power data in /Sonar/Beam_group2
         #  if only one type of data exist: data in /Sonar/Beam_group1 group
         ds_beam_power = None
+        ds_beam = None
         if len(ds_complex) > 0:
             ds_beam = self.merge_save(ds_complex, ds_invariant_complex)
             if len(ds_power) > 0:
                 ds_beam_power = self.merge_save(ds_power, ds_invariant_power)
-        else:
+        elif ds_invariant_power is not None:
             ds_beam = self.merge_save(ds_power, ds_invariant_power)
 
         # Manipulate some Dataset dimensions to adhere to convention
@@ -1183,9 +1187,10 @@ class SetGroupsEK80(SetGroupsBase):
                 self.ping_time_only_names,
             )
 
-        self.beam_groups_to_convention(
-            ds_beam, self.beam_only_names, self.beam_ping_time_names, self.ping_time_only_names
-        )
+        if ds_beam is not None:
+            self.beam_groups_to_convention(
+                ds_beam, self.beam_only_names, self.beam_ping_time_names, self.ping_time_only_names
+            )
 
         return [ds_beam, ds_beam_power]
 
@@ -1432,17 +1437,26 @@ class SetGroupsEK80(SetGroupsBase):
                         # Pad arrays
                         data = np.asarray(
                             [
-                                np.pad(a, (0, max_len - len(a)), "constant", constant_values=np.nan)
+                                np.pad(
+                                    a,
+                                    (0, max_len - len(a)),
+                                    "constant",
+                                    constant_values=np.nan,
+                                )
                                 for a in data
                             ]
                         )
                         dims = ["channel", f"{cd_type}_filter_n"]
                     else:
                         attrs = {
-                            "long_name": f"{attribute_values[cd_type]} {attribute_values[DECIMATION]}"  # noqa
+                            "long_name": f"{attribute_values[cd_type]} {attribute_values[DECIMATION]}"
                         }
                         dims = ["channel"]
                     # Set the xarray data dictionary
                     coeffs_xr_data[f"{cd_type}_{key}"] = (dims, data, attrs)
 
-        return dataset.assign(coeffs_xr_data)
+        # Create a new dataset with the filter data
+        filter_ds = xr.Dataset(coeffs_xr_data)
+
+        # Merge the original dataset with the filter dataset
+        return xr.merge([dataset, filter_ds], combine_attrs="override")
