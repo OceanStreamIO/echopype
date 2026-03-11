@@ -25,9 +25,9 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 
 | # | Branch | Title | Files | +/- |
 |---|--------|-------|-------|-----|
-| 1 | `upstream/pr1-trivial-fixes` | Type annotation + scalar extraction | 2 | +2/−2 |
-| 2 | `upstream/pr2-zero-length-dims` | Zero-length dims in conversion | 3 | +168/−95 |
-| 3 | `upstream/pr5-splitbeam-mixed-types` | Mixed beam types in split-beam (+ test) | 2 | +79/−11 |
+| 1 | `oceanstream/fix-type-hint-and-scalar-extraction` | Type annotation + scalar extraction | 2 | +2/−2 |
+| 2 | `oceanstream/fix-zero-length-dims` | Zero-length dims in conversion | 3 | +168/−95 |
+| 3 | `oceanstream/fix-splitbeam-mixed-types` | Mixed beam types in split-beam (+ test) | 2 | +79/−11 |
 
 **Total:** 7 files changed, ~249 insertions, ~108 deletions
 
@@ -37,7 +37,7 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 
 ### PR 1: Trivial bug fixes — type annotation + xarray scalar extraction
 
-**Branch:** `upstream/pr1-trivial-fixes`
+**Branch:** `oceanstream/fix-type-hint-and-scalar-extraction`
 **Files:**
 - `echopype/clean/api.py` — `SNR_threshold: float` → `SNR_threshold: str` (type hint doesn't match default `"3.0dB"`)
 - `echopype/calibrate/cal_params.py` — `.data.tolist().upper()` → `.values.item().upper()` (canonical xarray scalar extraction)
@@ -48,7 +48,7 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 
 ### PR 2: Handle zero-length dimensions in raw file conversion
 
-**Branch:** `upstream/pr2-zero-length-dims`
+**Branch:** `oceanstream/fix-zero-length-dims`
 **Files:**
 - `echopype/convert/api.py` — `has_zero_length_dim()` and `remove_zero_length_vars()` utilities; guards on every group save; `.sizes.values()` for xarray 2026.2 compat
 - `echopype/convert/set_groups_base.py` — Empty ping time guard in `_nan_timestamp_handler()`
@@ -62,7 +62,7 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 
 ### PR 3: Support mixed beam types in split-beam angle computation
 
-**Branch:** `upstream/pr5-splitbeam-mixed-types`
+**Branch:** `oceanstream/fix-splitbeam-mixed-types`
 **Files:**
 - `echopype/consolidate/split_beam_angle.py` — Main logic
 - `echopype/tests/consolidate/test_consolidate_integration.py` — New test
@@ -83,13 +83,13 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 
 The following changes are ready but held back to keep review load manageable. All are independent and can be submitted after Round 1 is merged:
 
-| Title | Scope | Files |
-|-------|-------|-------|
-| EK80 filter coefficient robustness | ~32 lines | `calibrate/ek80_complex.py` |
-| EK80 partial data conversion guards | ~22 lines | `convert/set_groups_ek80.py` |
-| CTD-enriched env param priority | ~12 lines | `calibrate/env_params.py` |
-| Commongrid + distance calculation | ~33 lines | `commongrid/api.py`, `commongrid/utils.py` |
-| Dynamic bin dim + Zarr guard + logging | ~18 lines | `clean/utils.py`, `echodata/echodata.py`, `utils/log.py` |
+| Branch | Title | Scope | Files |
+|--------|-------|-------|-------|
+| `oceanstream/fix-ek80-filter-robustness` | EK80 filter coefficient robustness | ~32 lines | `calibrate/ek80_complex.py` |
+| `oceanstream/fix-ek80-partial-data` | EK80 partial data conversion guards | ~22 lines | `convert/set_groups_ek80.py` |
+| `oceanstream/feat-ctd-env-priority` | CTD-enriched env param priority | ~12 lines | `calibrate/env_params.py` |
+| `oceanstream/fix-commongrid-robustness` | Commongrid + distance calculation | ~33 lines | `commongrid/api.py`, `commongrid/utils.py` |
+| `oceanstream/fix-bin-dim-zarr-logging` | Dynamic bin dim + Zarr guard + logging | ~18 lines | `clean/utils.py`, `echodata/echodata.py`, `utils/log.py` |
 
 ---
 
