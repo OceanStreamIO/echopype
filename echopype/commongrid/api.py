@@ -408,7 +408,10 @@ def compute_NASC(
 
     # If dataset has position information
     # propagate this to the final NASC dataset
-    ds_NASC = _get_reduced_positions(ds_Sv, ds_NASC, "NASC", dist_interval)
+    try:
+        ds_NASC = _get_reduced_positions(ds_Sv, ds_NASC, "NASC", dist_interval)
+    except Exception as e:
+        logger.warning(f"Error in getting reduced positions: {e}")
 
     # Set ping time binning information
     ds_NASC["ping_time"] = (["distance"], raw_NASC["ping_time"].data, ds_Sv["ping_time"].attrs)
@@ -433,6 +436,7 @@ def compute_NASC(
     ds_NASC.attrs["time_coverage_end"] = np.datetime_as_string(
         ds_Sv["ping_time"].max().values, timezone="UTC"
     )
+    ds_NASC.attrs["distance_max"] = float(dist_max.values)
     ds_NASC.attrs["geospatial_lat_min"] = round(float(ds_Sv["latitude"].min().values), 5)
     ds_NASC.attrs["geospatial_lat_max"] = round(float(ds_Sv["latitude"].max().values), 5)
     ds_NASC.attrs["geospatial_lon_min"] = round(float(ds_Sv["longitude"].min().values), 5)

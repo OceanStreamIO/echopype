@@ -208,10 +208,31 @@ def compute_raw_NASC(
 
 
 def get_distance_from_latlon(ds_Sv):
-    # Get distance from lat/lon in nautical miles
-    df_pos = ds_Sv["latitude"].to_dataframe().join(ds_Sv["longitude"].to_dataframe())
+    """
+    Calculate cumulative distance from latitude and longitude in the Sv dataset.
+
+    Parameters
+    ----------
+    ds_Sv : xr.Dataset
+        Dataset containing 'latitude' and 'longitude' coordinates.
+
+    Returns
+    -------
+    numpy.ndarray
+        Cumulative distance in nautical miles.
+    """
+    # Convert to DataFrame and select only relevant columns
+    df_lat = ds_Sv[["latitude"]].to_dataframe().reset_index()[["ping_time", "latitude"]]
+    df_lon = ds_Sv[["longitude"]].to_dataframe().reset_index()[["ping_time", "longitude"]]
+
+    # Merge latitude and longitude DataFrames
+    df_pos = pd.merge(df_lat, df_lon, on="ping_time", how="inner")
+
+    # Shift latitude and longitude for the previous point
     df_pos["latitude_prev"] = df_pos["latitude"].shift(-1)
     df_pos["longitude_prev"] = df_pos["longitude"].shift(-1)
+
+    # Drop NaNs and calculate distance
     df_latlon_nonan = df_pos.dropna().copy()
 
     if len(df_latlon_nonan) == 0:  # lat/lon entries are all NaN
@@ -220,11 +241,13 @@ def get_distance_from_latlon(ds_Sv):
     df_latlon_nonan["dist"] = df_latlon_nonan.apply(
         lambda x: distance.distance(
             (x["latitude"], x["longitude"]),
-            (x["latitude_prev"], x["longitude_prev"]),
+            (x["latitude_prev"], x["longitude_prev"])
         ).nm,
-        axis=1,
+        axis=1
     )
-    df_pos = df_pos.join(df_latlon_nonan["dist"], how="left")
+
+    # Merge distances back and compute cumulative distance
+    df_pos = pd.merge(df_pos, df_latlon_nonan[["ping_time", "dist"]], on="ping_time", how="left")
     df_pos["dist"] = df_pos["dist"].cumsum()
     df_pos["dist"] = df_pos["dist"].ffill().bfill()
 
