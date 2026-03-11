@@ -299,8 +299,13 @@ def get_env_params_EK(
             out_dict[p_user] = user_dict.get(p_user, env[p_data])
 
     # Sound speed
+    # Priority: 1) user_dict, 2) measured 'sound_speed' in Environment, 3) calculate
     if out_dict["sound_speed"] is None:
-        if not tspa_all_exist:
+        # Check if measured sound_speed exists in Environment group (from CTD enrichment)
+        if "sound_speed" in env.data_vars:
+            out_dict["sound_speed"] = env["sound_speed"]
+            out_dict.pop("formula_sound_speed")
+        elif not tspa_all_exist:
             # sounds speed always exist in EK60 and EK80 data
             out_dict["sound_speed"] = env["sound_speed_indicative"]
             out_dict.pop("formula_sound_speed")
@@ -319,8 +324,13 @@ def get_env_params_EK(
         out_dict.pop("formula_sound_speed")  # remove this since no calculation
 
     # Sound absorption
+    # Priority: 1) user_dict, 2) measured 'sound_absorption' in Environment, 3) calculate
     if out_dict["sound_absorption"] is None:
-        if not tspa_all_exist and sonar_type != "EK80":  # this should not happen for EK80
+        # Check if measured sound_absorption exists in Environment group (from CTD enrichment)
+        if "sound_absorption" in env.data_vars:
+            out_dict["sound_absorption"] = env["sound_absorption"]
+            out_dict.pop("formula_absorption")
+        elif not tspa_all_exist and sonar_type != "EK80":  # this should not happen for EK80
             # absorption always exist in EK60 data
             out_dict["sound_absorption"] = env["absorption_indicative"]
             out_dict.pop("formula_absorption")
