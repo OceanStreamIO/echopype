@@ -61,14 +61,41 @@ def filter_decimate_chirp(coeff_ch: Dict, y_ch: np.array, fs: float):
     # Get values
 
     # WBT filter and decimation
-    ytx_wbt = signal.convolve(y_ch, coeff_ch["wbt_fil"])
-    ytx_wbt_deci = ytx_wbt[0 :: int(coeff_ch["wbt_decifac"])]
+    try:
+        ytx_wbt = signal.convolve(y_ch, coeff_ch["wbt_fil"])
+    except ValueError:
+        ytx_wbt = signal.convolve(y_ch, coeff_ch["wbt_fil"].flatten())
+
+    # Handle the wbt_decifac array
+    if isinstance(coeff_ch["wbt_decifac"], np.ndarray):
+        unique_values = np.unique(coeff_ch["wbt_decifac"])
+        wbt_decimation_factor = int(unique_values[0])
+    else:
+        wbt_decimation_factor = int(coeff_ch["wbt_decifac"])
+
+    ytx_wbt_deci = ytx_wbt[0::wbt_decimation_factor]
 
     # PC filter and decimation
-    ytx_pc = signal.convolve(ytx_wbt_deci, coeff_ch["pc_fil"])
-    ytx_pc_deci = ytx_pc[0 :: int(coeff_ch["pc_decifac"])]
+    try:
+        ytx_pc = signal.convolve(ytx_wbt_deci, coeff_ch["pc_fil"])
+    except ValueError:
+        ytx_pc = signal.convolve(ytx_wbt_deci, coeff_ch["pc_fil"].flatten())
+
+    pc_decifac = coeff_ch["pc_decifac"]
+    if isinstance(pc_decifac, np.ndarray):
+        unique_pc_decifac = np.unique(pc_decifac)
+        if len(unique_pc_decifac) == 1:
+            pc_decimation_factor = int(unique_pc_decifac[0])
+        else:
+            raise ValueError(f"Multiple pc_decifac values found: {unique_pc_decifac}")
+    else:
+        pc_decimation_factor = int(pc_decifac)
+
+    ytx_pc_deci = ytx_pc[0::pc_decimation_factor]
+    total_decimation_factor = wbt_decimation_factor * pc_decimation_factor
+
     ytx_pc_deci_time = (
-        np.arange(ytx_pc_deci.size) * 1 / fs * coeff_ch["wbt_decifac"] * coeff_ch["pc_decifac"]
+        np.arange(ytx_pc_deci.size) * 1 / fs * total_decimation_factor
     )
 
     return ytx_pc_deci, ytx_pc_deci_time
