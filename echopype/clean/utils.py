@@ -208,9 +208,10 @@ def downsample_upsample_along_depth(
     ).pipe(_lin2log)
 
     # Assign a depth bin index to each Sv depth value
+    bin_dim = f"{range_var}_bins"
     depth_bin_assignment = xr.DataArray(
         np.digitize(
-            ds_Sv[range_var], [interval.left for interval in downsampled_Sv["depth_bins"].data]
+            ds_Sv[range_var], [interval.left for interval in downsampled_Sv[bin_dim].data]
         ),
         dims=["channel", "ping_time", "range_sample"],
     )
@@ -239,8 +240,8 @@ def downsample_upsample_along_depth(
             # corresponding to the first element (lowest depth value) of each depth bin, and rename
             # `depth_bin` coordinate to `range_sample`.
             subset_downsampled_Sv = subset_downsampled_Sv.assign_coords(
-                {"depth_bins": unique_range_sample_indices}
-            ).rename({"depth_bins": "range_sample"})
+                {bin_dim: unique_range_sample_indices}
+            ).rename({bin_dim: "range_sample"})
 
             # Upsample via `reindex` `ffill`
             upsampled_Sv[dict(channel=channel_index, ping_time=ping_time_index)] = (

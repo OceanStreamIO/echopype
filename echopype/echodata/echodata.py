@@ -4,7 +4,7 @@ import sys
 import warnings
 from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, MutableMapping, Optional, Set, Tuple, Union
 
 import dask.array
 import fsspec
@@ -167,9 +167,13 @@ class EchoData:
             storage_options=storage_options,
             open_kwargs=open_kwargs,
         )
-        echodata._check_path(converted_raw_path)
-        converted_raw_path = echodata._sanitize_path(converted_raw_path)
-        suffix = echodata._check_suffix(converted_raw_path)
+
+        if not isinstance(converted_raw_path, MutableMapping):
+            echodata._check_path(converted_raw_path)
+            converted_raw_path = echodata._sanitize_path(converted_raw_path)
+            suffix = echodata._check_suffix(converted_raw_path)
+        else:
+            suffix = ".zarr"
 
         # Open specific groups to check if this is new or legacy data wrt xr.DataTree updates
         # Legacy data will have: `channel` instead of `channel_all` in the Sonar group

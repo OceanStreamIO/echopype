@@ -97,11 +97,12 @@ def _init_logger(name) -> logging.Logger:
     return logger
 
 
-def _set_verbose(verbose: bool) -> None:
-    if not verbose:
-        logging.disable(logging.WARNING)
-    else:
-        logging.disable(logging.NOTSET)
+def _set_verbose(is_verbose: bool) -> None:
+    package_name = __name__.split(".")[0]
+    level = logging.INFO if is_verbose else logging.ERROR
+    for logger in _get_all_loggers():
+        if package_name in logger.name:
+            logger.setLevel(level)
 
 
 def _set_logfile(logger: logging.Logger, logfile: Optional[str] = None) -> logging.Logger:
