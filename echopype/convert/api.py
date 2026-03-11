@@ -99,6 +99,19 @@ def to_file(
     echodata.converted_raw_path = output_file
 
 
+def has_zero_length_dim(dataset):
+    return any(size == 0 for size in dataset.sizes.values())
+
+
+def remove_zero_length_vars(dataset):
+    # Clear chunking encoding for variables with zero-length dimensions
+    for var_name, var in dataset.variables.items():
+        if any(dataset.sizes[dim] == 0 for dim in var.dims):
+            var.encoding.pop('chunks', None)
+            var.encoding.pop('chunksizes', None)
+    return dataset
+
+
 def _save_groups_to_file(echodata, output_path, engine, compress=True, **kwargs):
     """Serialize all groups to file."""
     # TODO: in terms of chunking, would using rechunker at the end be faster and more convenient?
@@ -115,83 +128,114 @@ def _save_groups_to_file(echodata, output_path, engine, compress=True, **kwargs)
     )
 
     # Environment group
-    io.save_file(
-        echodata["Environment"],  # TODO: chunking necessary?
-        path=output_path,
-        mode="a",
-        engine=engine,
-        group="Environment",
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
+    environment_ds = echodata["Environment"]
+    if has_zero_length_dim(environment_ds):
+        environment_ds = remove_zero_length_vars(environment_ds)
 
-    # Platform group
-    io.save_file(
-        echodata["Platform"],  # TODO: chunking necessary? time1 and time2 (EK80) only
-        path=output_path,
-        mode="a",
-        engine=engine,
-        group="Platform",
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
-
-    # Platform/NMEA group: some sonar model does not produce NMEA data
-    if echodata["Platform/NMEA"] is not None:
+    if environment_ds:
         io.save_file(
-            echodata["Platform/NMEA"],  # TODO: chunking necessary?
+            environment_ds,  # TODO: chunking necessary?
             path=output_path,
             mode="a",
             engine=engine,
-            group="Platform/NMEA",
+            group="Environment",
+            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+            **kwargs,
+        )
+    else:
+        logger.warning("Environment group has zero-length dimension(s). Saving as empty dataset.")
+
+    # Platform group
+    platform_ds = echodata["Platform"]
+    if has_zero_length_dim(platform_ds):
+        platform_ds = remove_zero_length_vars(platform_ds)
+
+    if platform_ds:
+        io.save_file(
+            platform_ds,  # TODO: chunking necessary? time1 and time2 (EK80) only
+            path=output_path,
+            mode="a",
+            engine=engine,
+            group="Platform",
             compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
             **kwargs,
         )
 
+    # Platform/NMEA group: some sonar model does not produce NMEA data
+    nmea_ds = echodata["Platform/NMEA"]
+    if nmea_ds is not None:
+        if has_zero_length_dim(nmea_ds):
+            nmea_ds = remove_zero_length_vars(nmea_ds)
+
+        if nmea_ds:
+            io.save_file(
+                nmea_ds,  # TODO: chunking necessary?
+                path=output_path,
+                mode="a",
+                engine=engine,
+                group="Platform/NMEA",
+                compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+                **kwargs,
+            )
+
     # Provenance group
-    io.save_file(
-        echodata["Provenance"],
-        path=output_path,
-        group="Provenance",
-        mode="a",
-        engine=engine,
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
+    provenance_ds = echodata["Provenance"]
+
+    if has_zero_length_dim(provenance_ds):
+        provenance_ds = remove_zero_length_vars(provenance_ds)
+
+    if provenance_ds:
+        io.save_file(
+            provenance_ds,
+            path=output_path,
+            group="Provenance",
+            mode="a",
+            engine=engine,
+            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+            **kwargs,
+        )
 
     # Sonar group
-    io.save_file(
-        echodata["Sonar"],
-        path=output_path,
-        group="Sonar",
-        mode="a",
-        engine=engine,
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
+    sonar_ds = echodata["Sonar"]
+
+    if has_zero_length_dim(sonar_ds):
+        sonar_ds = remove_zero_length_vars(sonar_ds)
+
+    if sonar_ds:
+        io.save_file(
+            sonar_ds,
+            path=output_path,
+            group="Sonar",
+            mode="a",
+            engine=engine,
+            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+            **kwargs,
+        )
 
     # /Sonar/Beam_groupX group
     if echodata.sonar_model == "AD2CP":
         for i in range(1, len(echodata["Sonar"]["beam_group"]) + 1):
+            if echodata[f"Sonar/Beam_group{i}"] is not None:
+                io.save_file(
+                    echodata[f"Sonar/Beam_group{i}"],
+                    path=output_path,
+                    mode="a",
+                    engine=engine,
+                    group=f"Sonar/Beam_group{i}",
+                    compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+                    **kwargs,
+                )
+    else:
+        if echodata["Sonar/Beam_group1"] is not None:
             io.save_file(
-                echodata[f"Sonar/Beam_group{i}"],
+                echodata[f"Sonar/{BEAM_SUBGROUP_DEFAULT}"],
                 path=output_path,
                 mode="a",
                 engine=engine,
-                group=f"Sonar/Beam_group{i}",
+                group=f"Sonar/{BEAM_SUBGROUP_DEFAULT}",
                 compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
                 **kwargs,
             )
-    else:
-        io.save_file(
-            echodata[f"Sonar/{BEAM_SUBGROUP_DEFAULT}"],
-            path=output_path,
-            mode="a",
-            engine=engine,
-            group=f"Sonar/{BEAM_SUBGROUP_DEFAULT}",
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-            **kwargs,
-        )
         if echodata["Sonar/Beam_group2"] is not None:
             # some sonar model does not produce Sonar/Beam_group2
             io.save_file(
@@ -205,15 +249,20 @@ def _save_groups_to_file(echodata, output_path, engine, compress=True, **kwargs)
             )
 
     # Vendor_specific group
-    io.save_file(
-        echodata["Vendor_specific"],  # TODO: chunking necessary?
-        path=output_path,
-        mode="a",
-        engine=engine,
-        group="Vendor_specific",
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
+    vendor_ds = echodata["Vendor_specific"]
+    if has_zero_length_dim(vendor_ds):
+        vendor_ds = remove_zero_length_vars(vendor_ds)
+
+    if vendor_ds:
+        io.save_file(
+            vendor_ds,  # TODO: chunking necessary?
+            path=output_path,
+            mode="a",
+            engine=engine,
+            group="Vendor_specific",
+            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+            **kwargs,
+        )
 
 
 def _set_convert_params(param_dict: Dict[str, str]) -> Dict[str, str]:
