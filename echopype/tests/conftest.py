@@ -4,7 +4,12 @@ import os
 from pathlib import Path
 
 import pytest
-import pooch
+
+# Will be set by Pooch block below, or fallback to empty path
+TEST_DATA_FOLDER = None
+
+if os.getenv("USE_POOCH") == "True":
+    import pooch
 
 from zipfile import ZipFile
 import shutil
@@ -144,15 +149,32 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
         for p in sorted(TEST_DATA_FOLDER.iterdir()):
             print(f"   - {p.name}")
 
+else:
+    print(
+        "\n[echopype-ci] USE_POOCH is not set or not 'True'.\n"
+        "  Test data will NOT be downloaded automatically.\n"
+        "  Set USE_POOCH=True to enable Pooch-based data fetching.\n"
+        f"  Current USE_POOCH value: {os.getenv('USE_POOCH', '<not set>')}\n",
+        flush=True,
+    )
+
 
 @pytest.fixture(scope="session")
-def dump_output_dir():
-    return TEST_DATA_FOLDER / "dump"
+def dump_output_dir(tmp_path_factory):
+    if TEST_DATA_FOLDER is not None:
+        d = TEST_DATA_FOLDER / "dump"
+    else:
+        d = tmp_path_factory.mktemp("dump")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 @pytest.fixture(scope="session")
 def test_path():
-    return {
+    if TEST_DATA_FOLDER is None:
+        pytest.skip("Test data not available — set USE_POOCH=True to download")
+
+    paths = {
         "ROOT": TEST_DATA_FOLDER,
         "EA640": TEST_DATA_FOLDER / "ea640",
         "EK60": TEST_DATA_FOLDER / "ek60",
@@ -176,6 +198,30 @@ def test_path():
         "ECS": TEST_DATA_FOLDER / "ecs",
         "LEGACY_DATATREE": TEST_DATA_FOLDER / "legacy_datatree",
     }
+
+    # Validate data directories exist and report status
+    missing = []
+    present = []
+    for key, path in paths.items():
+        if key == "ROOT":
+            continue
+        if path.exists():
+            file_count = sum(1 for _ in path.rglob("*") if _.is_file())
+            present.append(f"  ✓ {key}: {path.name}/ ({file_count} files)")
+        else:
+            missing.append(f"  ✗ {key}: {path.name}/ — MISSING")
+
+    print(f"\n[echopype-ci] Test data validation ({len(present)} present, {len(missing)} missing):")
+    for line in present:
+        print(line)
+    for line in missing:
+        print(line)
+    if missing:
+        print(f"\n[echopype-ci] WARNING: {len(missing)} test data directories missing!")
+        print("  Some tests will fail. Re-run with USE_POOCH=True to download.\n")
+    print(flush=True)
+
+    return paths
 
 
 @pytest.fixture(scope="session")
