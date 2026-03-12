@@ -28,6 +28,8 @@ easiest-to-review changes — with more to follow based on maintainer feedback.
 | 1 | `oceanstream/fix-type-hint-and-scalar-extraction` | Type annotation + scalar extraction | 2 | +2/−2 |
 | 2 | `oceanstream/fix-zero-length-dims` | Zero-length dims in conversion | 3 | +168/−95 |
 | 3 | `oceanstream/fix-splitbeam-mixed-types` | Mixed beam types in split-beam (+ test) | 2 | +79/−11 |
+| 4 | `oceanstream/ci-pip-cache-concurrency` | CI: pip caching, concurrency, auto workers | 2 | +12/−3 |
+| 5 | `oceanstream/fix-add-location-duplicate-times` | Deduplicate times in add_location (fixes #1478) | 3 | +33/−19 |
 
 **Total:** 7 files changed, ~249 insertions, ~108 deletions
 
