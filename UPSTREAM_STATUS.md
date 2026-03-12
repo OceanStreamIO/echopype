@@ -93,6 +93,19 @@ The following changes are ready but held back to keep review load manageable. Al
 
 ---
 
+## CI Improvement PR
+
+| Branch | Title | Files |
+|--------|-------|-------|
+| `oceanstream/ci-pip-cache-concurrency` | CI: pip caching, concurrency groups, auto workers | `pr.yaml`, `build.yaml` |
+
+**Changes:**
+- **Pip caching:** Add `cache: pip` to all `setup-python` steps (Linux + Windows in `pr.yaml`, Linux in `build.yaml`) — avoids re-downloading ~200 MB of wheels on every run
+- **Concurrency groups:** Cancel in-progress runs when a new push arrives on the same branch/PR — eliminates wasted CI minutes on superseded commits
+- **`NUM_WORKERS: auto`:** Let pytest-xdist auto-detect optimal parallelism (`nproc` on Linux, `ncpu` on macOS/Windows) instead of hardcoding 2 — GitHub-hosted runners have 4 vCPUs
+
+---
+
 ## Excluded from Upstream
 
 The following fork-specific changes are intentionally **not** included in any upstream PR:
