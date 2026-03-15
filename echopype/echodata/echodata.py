@@ -155,6 +155,16 @@ class EchoData:
     def _set_tree(self, tree: DataTree):
         self._tree = tree
 
+    @property
+    def tree(self) -> Optional[DataTree]:
+        """Direct access to the underlying DataTree.
+
+        Returns the internal ``xr.DataTree`` that stores all EchoData groups.
+        This can be used for DataTree-native operations such as
+        ``tree.to_netcdf()`` or ``tree.to_zarr()``.
+        """
+        return self._tree
+
     @classmethod
     def from_file(
         cls,

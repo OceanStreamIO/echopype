@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union
 
+import dask.array
 import fsspec
 from xarray import DataTree
 
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 # fmt: on
 from ..echodata.echodata import XARRAY_ENGINE_MAP, EchoData
 from ..utils import io
-from ..utils.coding import COMPRESSION_SETTINGS
+from ..utils.coding import COMPRESSION_SETTINGS, sanitize_dtypes, set_storage_encodings
 from ..utils.log import _init_logger
 from ..utils.prov import add_processing_level
 
@@ -113,156 +114,77 @@ def remove_zero_length_vars(dataset):
 
 
 def _save_groups_to_file(echodata, output_path, engine, compress=True, **kwargs):
-    """Serialize all groups to file."""
-    # TODO: in terms of chunking, would using rechunker at the end be faster and more convenient?
-    # TODO: investigate chunking before we save Dataset to a file
+    """Serialize all groups to file using DataTree-native I/O.
 
-    # Top-level group
-    io.save_file(
-        echodata["Top-level"],
-        path=output_path,
-        mode="w",
-        engine=engine,
-        compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-        **kwargs,
-    )
+    Uses ``DataTree.to_netcdf`` or ``DataTree.to_zarr`` to write the entire
+    tree in a single call, replacing the previous per-group save loop.
+    """
+    tree = echodata._tree
+    if tree is None:
+        raise ValueError("EchoData has no DataTree to save.")
 
-    # Environment group
-    environment_ds = echodata["Environment"]
-    if has_zero_length_dim(environment_ds):
-        environment_ds = remove_zero_length_vars(environment_ds)
+    compression_settings = COMPRESSION_SETTINGS[engine] if compress else None
 
-    if environment_ds:
-        io.save_file(
-            environment_ds,  # TODO: chunking necessary?
-            path=output_path,
-            mode="a",
-            engine=engine,
-            group="Environment",
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
+    # Sanitize dtypes in each node (e.g. convert object → str) and build
+    # the nested encoding dict keyed by group path (e.g. "/", "/Environment").
+    # Use inherit=False so each group only produces encodings for its own
+    # variables, not coordinates inherited from parent nodes.
+    encoding = {}
+    for group_path in tree.groups:
+        node = tree[group_path] if group_path != "/" else tree
+        if not (node.has_data or node.has_attrs):
+            continue
+        ds = node.to_dataset(inherit=False)
+        if len(ds.variables) == 0:
+            continue
+        # Handle zero-length dimensions before encoding
+        if has_zero_length_dim(ds):
+            ds = remove_zero_length_vars(ds)
+        ds = sanitize_dtypes(ds)
+        group_encoding = set_storage_encodings(ds, compression_settings, engine)
+
+        # For zarr: align dask chunks with encoding chunks to avoid
+        # "overlapping chunks" errors during parallel writes.
+        if engine == "zarr":
+            for var, enc in group_encoding.items():
+                if var in ds and isinstance(ds[var].data, dask.array.Array):
+                    enc_chunks = enc.get("chunks")
+                    if enc_chunks is not None:
+                        ds[var] = ds[var].chunk(
+                            dict(zip(ds[var].dims, enc_chunks))
+                        )
+
+        node.dataset = ds
+        encoding[group_path] = group_encoding
+
+    if engine == "netcdf4":
+        if isinstance(output_path, fsspec.FSMap):
+            # DataTree.to_netcdf requires a file path, not an FSMap
+            file_path = output_path.root
+        else:
+            file_path = str(output_path)
+        tree.to_netcdf(
+            file_path,
+            mode="w",
+            engine="netcdf4",
+            encoding=encoding,
+            write_inherited_coords=True,
+            **kwargs,
+        )
+    elif engine == "zarr":
+        if isinstance(output_path, fsspec.FSMap):
+            store = output_path.root
+        else:
+            store = str(output_path)
+        tree.to_zarr(
+            store,
+            mode="w",
+            encoding=encoding,
+            write_inherited_coords=True,
             **kwargs,
         )
     else:
-        logger.warning("Environment group has zero-length dimension(s). Saving as empty dataset.")
-
-    # Platform group
-    platform_ds = echodata["Platform"]
-    if has_zero_length_dim(platform_ds):
-        platform_ds = remove_zero_length_vars(platform_ds)
-
-    if platform_ds:
-        io.save_file(
-            platform_ds,  # TODO: chunking necessary? time1 and time2 (EK80) only
-            path=output_path,
-            mode="a",
-            engine=engine,
-            group="Platform",
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-            **kwargs,
-        )
-
-    # Platform/NMEA group: some sonar model does not produce NMEA data
-    nmea_ds = echodata["Platform/NMEA"]
-    if nmea_ds is not None:
-        if has_zero_length_dim(nmea_ds):
-            nmea_ds = remove_zero_length_vars(nmea_ds)
-
-        if nmea_ds:
-            io.save_file(
-                nmea_ds,  # TODO: chunking necessary?
-                path=output_path,
-                mode="a",
-                engine=engine,
-                group="Platform/NMEA",
-                compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-                **kwargs,
-            )
-
-    # Provenance group
-    provenance_ds = echodata["Provenance"]
-
-    if has_zero_length_dim(provenance_ds):
-        provenance_ds = remove_zero_length_vars(provenance_ds)
-
-    if provenance_ds:
-        io.save_file(
-            provenance_ds,
-            path=output_path,
-            group="Provenance",
-            mode="a",
-            engine=engine,
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-            **kwargs,
-        )
-
-    # Sonar group
-    sonar_ds = echodata["Sonar"]
-
-    if has_zero_length_dim(sonar_ds):
-        sonar_ds = remove_zero_length_vars(sonar_ds)
-
-    if sonar_ds:
-        io.save_file(
-            sonar_ds,
-            path=output_path,
-            group="Sonar",
-            mode="a",
-            engine=engine,
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-            **kwargs,
-        )
-
-    # /Sonar/Beam_groupX group
-    if echodata.sonar_model == "AD2CP":
-        for i in range(1, len(echodata["Sonar"]["beam_group"]) + 1):
-            if echodata[f"Sonar/Beam_group{i}"] is not None:
-                io.save_file(
-                    echodata[f"Sonar/Beam_group{i}"],
-                    path=output_path,
-                    mode="a",
-                    engine=engine,
-                    group=f"Sonar/Beam_group{i}",
-                    compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-                    **kwargs,
-                )
-    else:
-        if echodata["Sonar/Beam_group1"] is not None:
-            io.save_file(
-                echodata[f"Sonar/{BEAM_SUBGROUP_DEFAULT}"],
-                path=output_path,
-                mode="a",
-                engine=engine,
-                group=f"Sonar/{BEAM_SUBGROUP_DEFAULT}",
-                compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-                **kwargs,
-            )
-        if echodata["Sonar/Beam_group2"] is not None:
-            # some sonar model does not produce Sonar/Beam_group2
-            io.save_file(
-                echodata["Sonar/Beam_group2"],
-                path=output_path,
-                mode="a",
-                engine=engine,
-                group="Sonar/Beam_group2",
-                compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-                **kwargs,
-            )
-
-    # Vendor_specific group
-    vendor_ds = echodata["Vendor_specific"]
-    if has_zero_length_dim(vendor_ds):
-        vendor_ds = remove_zero_length_vars(vendor_ds)
-
-    if vendor_ds:
-        io.save_file(
-            vendor_ds,  # TODO: chunking necessary?
-            path=output_path,
-            mode="a",
-            engine=engine,
-            group="Vendor_specific",
-            compression_settings=COMPRESSION_SETTINGS[engine] if compress else None,
-            **kwargs,
-        )
+        raise ValueError(f"{engine} is not a supported save format")
 
 
 def _set_convert_params(param_dict: Dict[str, str]) -> Dict[str, str]:
