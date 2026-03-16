@@ -1,7 +1,6 @@
 """Tests for DataTree-native I/O serialization (echopype#1551).
 
 Covers:
-- EchoData.tree property
 - Roundtrip save/load via netCDF and zarr
 - Object dtype sanitization during save
 - Group structure preservation
@@ -68,33 +67,6 @@ def rich_ed():
     ed._set_tree(tree)
     ed._load_tree()
     return ed
-
-
-# ---------------------------------------------------------------------------
-# EchoData.tree property
-# ---------------------------------------------------------------------------
-
-
-class TestTreeProperty:
-    @pytest.mark.unit
-    def test_tree_returns_datatree(self, mock_ed):
-        """tree property should return the internal DataTree."""
-        assert isinstance(mock_ed.tree, DataTree)
-        assert mock_ed.tree is mock_ed._tree
-
-    @pytest.mark.unit
-    def test_tree_none_when_unset(self):
-        """tree is None on a freshly created EchoData with no data."""
-        ed = EchoData()
-        assert ed.tree is None
-
-    @pytest.mark.unit
-    def test_tree_groups_match_group_paths(self, mock_ed):
-        """Groups in the tree should match EchoData.group_paths."""
-        tree_groups = set(
-            g[1:] if g != "/" else "Top-level" for g in mock_ed.tree.groups
-        )
-        assert tree_groups == set(mock_ed.group_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +193,7 @@ class TestSaveGroupsToFile:
         # Open as DataTree and check groups
         tree = xr.open_datatree(str(nc_path), engine="netcdf4")
         saved_groups = set(tree.groups)
-        expected_groups = set(rich_ed.tree.groups)
+        expected_groups = set(rich_ed._tree.groups)
         assert saved_groups == expected_groups
         tree.close()
 
@@ -232,7 +204,7 @@ class TestSaveGroupsToFile:
         _save_groups_to_file(rich_ed, zarr_path, engine="zarr")
 
         # Verify group directories exist
-        for group_path in rich_ed.tree.groups:
+        for group_path in rich_ed._tree.groups:
             if group_path == "/":
                 # Root always exists
                 assert zarr_path.exists()
