@@ -338,15 +338,17 @@ def test_add_splitbeam_angle_BB_pc(test_path):
 
 
 def test_add_splitbeam_angle_partial_valid_channels(test_path):
+    """Force one channel to an unsupported split-beam configuration and verify
+    that angles are only computed for the valid channels."""
     raw_file = test_path["EK80_CAL"] / "2018115-D20181213-T094600.raw"
     ed = ep.open_raw(raw_file, sonar_model="EK80")
 
-    # Manually override beam_type for one channel to simulate single-beam
-    beam_types = ed["Sonar/Beam_group1"]["beam_type"].values
-    total_channels = beam_types.shape[0]
-
-    # Force the second channel to an unsupported beam_type
-    beam_types[1] = 0
+    # Override beam_type for a specific channel to simulate single-beam (type 0)
+    forced_channel = "WBT 714583-15 ES120-7C"
+    beam_group = ed["Sonar/Beam_group1"]
+    channel_idx = list(beam_group["channel"].values).index(forced_channel)
+    beam_types = beam_group["beam_type"].values
+    beam_types[channel_idx] = 0
     ed["Sonar/Beam_group1"]["beam_type"].data[:] = beam_types
 
     # Compute Sv
