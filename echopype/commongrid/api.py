@@ -217,7 +217,7 @@ def compute_MVBS(
 
 
 @add_processing_level("L3*")
-def compute_MVBS_index_binning(ds_Sv, range_sample_num=100, ping_num=100):
+def compute_MVBS_index_binning(ds_Sv, range_sample_num=100, ping_num=100, use_gpu="auto"):
     """
     Compute Mean Volume Backscattering Strength (MVBS)
     based on intervals of ``range_sample`` and ping number (``ping_num``) specified in index number.
@@ -234,33 +234,108 @@ def compute_MVBS_index_binning(ds_Sv, range_sample_num=100, ping_num=100):
         number of samples to average along the ``range_sample`` dimension, default to 100
     ping_num : int
         number of pings to average, default to 100
+    use_gpu : bool or {"auto"}, default "auto"
+        GPU acceleration strategy:
+
+        * ``"auto"`` — use GPU when CuPy + CUDA are available.
+        * ``True``   — require GPU; raises ``RuntimeError`` if unavailable.
+        * ``False``  — force CPU-only computation.
 
     Returns
     -------
     A dataset containing bin-averaged Sv
     """
-    da_sv = 10 ** (ds_Sv["Sv"] / 10)  # average should be done in linear domain
-    da = 10 * np.log10(
-        da_sv.coarsen(ping_time=ping_num, range_sample=range_sample_num, boundary="pad").mean(
-            skipna=True
-        )
-    )
+    from ..utils.gpu import resolve_use_gpu
 
-    # Attach attributes and coarsened echo_range
-    da.name = "Sv"
-    ds_MVBS = da.to_dataset()
-    ds_MVBS.coords["range_sample"] = (
-        "range_sample",
-        np.arange(ds_MVBS["range_sample"].size),
-        {"long_name": "Along-range sample number, base 0"},
-    )  # reset range_sample to start from 0
-    ds_MVBS["echo_range"] = (
-        ds_Sv["echo_range"]
-        .coarsen(  # binned echo_range (use first value in each average bin)
-            ping_time=ping_num, range_sample=range_sample_num, boundary="pad"
+    _do_gpu = resolve_use_gpu(use_gpu)
+
+    if _do_gpu:
+        from .gpu_mvbs import mvbs_index_binning_gpu
+
+        sv_da = ds_Sv["Sv"]
+        channels = sv_da["channel"].values if "channel" in sv_da.dims else [None]
+        mvbs_list = []
+        for ch in channels:
+            sv_ch = sv_da.sel(channel=ch) if ch is not None else sv_da
+            sv_np = sv_ch.values  # (ping_time, range_sample)
+            if hasattr(sv_ch, "chunks") and sv_ch.chunks is not None:
+                sv_np = sv_ch.values  # triggers dask compute
+            mvbs_np = mvbs_index_binning_gpu(sv_np, ping_num=ping_num,
+                                             range_sample_num=range_sample_num)
+            mvbs_list.append(mvbs_np)
+
+        # Stack and wrap in xr.DataArray matching the standard output
+        mvbs_arr = np.stack(mvbs_list, axis=0) if len(mvbs_list) > 1 else mvbs_list[0][np.newaxis]
+        n_out_ping, n_out_range = mvbs_arr.shape[-2], mvbs_arr.shape[-1]
+
+        # Build coarsened coordinates
+        ping_time_vals = sv_da["ping_time"].values
+        coarsened_ping = ping_time_vals[::ping_num][:n_out_ping]
+        coarsened_range_sample = np.arange(n_out_range)
+
+        da = xr.DataArray(
+            data=10 * np.log10(10 ** (mvbs_arr / 10)),  # already in dB — identity
+            dims=["channel", "ping_time", "range_sample"] if "channel" in sv_da.dims
+            else ["ping_time", "range_sample"],
+            coords=(
+                {"channel": sv_da["channel"], "ping_time": coarsened_ping,
+                 "range_sample": ("range_sample", coarsened_range_sample,
+                                  {"long_name": "Along-range sample number, base 0"})}
+                if "channel" in sv_da.dims else
+                {"ping_time": coarsened_ping,
+                 "range_sample": ("range_sample", coarsened_range_sample,
+                                  {"long_name": "Along-range sample number, base 0"})}
+            ),
+            name="Sv",
         )
-        .min(skipna=True)
-    )
+        da.values[:] = mvbs_arr  # direct assignment (already dB)
+        ds_MVBS = da.to_dataset()
+
+        # Coarsened echo_range — take first value in each bin
+        er = ds_Sv["echo_range"]
+        if "channel" in er.dims:
+            er_list = []
+            for ch in channels:
+                er_ch = er.sel(channel=ch).values[:ping_num * n_out_ping, :range_sample_num * n_out_range]
+                er_ch = er_ch.reshape(n_out_ping, ping_num, n_out_range, range_sample_num)
+                er_list.append(np.nanmin(er_ch, axis=(1, 3)))
+            er_coarsened = np.stack(er_list, axis=0)
+            ds_MVBS["echo_range"] = xr.DataArray(
+                er_coarsened, dims=["channel", "ping_time", "range_sample"],
+                coords={"channel": sv_da["channel"], "ping_time": coarsened_ping,
+                         "range_sample": coarsened_range_sample},
+            )
+        else:
+            er_np = er.values[:ping_num * n_out_ping, :range_sample_num * n_out_range]
+            er_np = er_np.reshape(n_out_ping, ping_num, n_out_range, range_sample_num)
+            ds_MVBS["echo_range"] = xr.DataArray(
+                np.nanmin(er_np, axis=(1, 3)), dims=["ping_time", "range_sample"],
+                coords={"ping_time": coarsened_ping, "range_sample": coarsened_range_sample},
+            )
+
+        logger.info("compute_MVBS_index_binning: used GPU path")
+    else:
+        da_sv = 10 ** (ds_Sv["Sv"] / 10)  # average should be done in linear domain
+        da = 10 * np.log10(
+            da_sv.coarsen(
+                ping_time=ping_num, range_sample=range_sample_num, boundary="pad"
+            ).mean(skipna=True)
+        )
+        da.name = "Sv"
+        ds_MVBS = da.to_dataset()
+        ds_MVBS.coords["range_sample"] = (
+            "range_sample",
+            np.arange(ds_MVBS["range_sample"].size),
+            {"long_name": "Along-range sample number, base 0"},
+        )
+        ds_MVBS["echo_range"] = (
+            ds_Sv["echo_range"]
+            .coarsen(
+                ping_time=ping_num, range_sample=range_sample_num, boundary="pad"
+            )
+            .min(skipna=True)
+        )
+
     _set_MVBS_attrs(ds_MVBS)
     ds_MVBS["Sv"] = ds_MVBS["Sv"].assign_attrs(
         {

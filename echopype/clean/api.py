@@ -440,6 +440,7 @@ def remove_background_noise(
     range_sample_num: int,
     background_noise_max: str = None,
     SNR_threshold: str = "3.0dB",
+    use_gpu="auto",
 ) -> xr.Dataset:
     """
     Remove noise by using estimates of background noise
@@ -457,6 +458,12 @@ def remove_background_noise(
         The upper limit for background noise expected under the operating conditions.
     SNR_threshold : str, default "3.0dB"
         Acceptable signal-to-noise ratio, default to 3 dB.
+    use_gpu : bool or {"auto"}, default "auto"
+        GPU acceleration strategy:
+
+        * ``"auto"`` — use GPU when CuPy + CUDA are available.
+        * ``True``   — require GPU; raises ``RuntimeError`` if unavailable.
+        * ``False``  — force CPU-only computation.
 
     Returns
     -------
@@ -472,19 +479,74 @@ def remove_background_noise(
         and remove echosounder background noise.
         ICES Journal of Marine Sciences 64(6): 1282–1291.
     """
+    from ..utils.gpu import resolve_use_gpu
+
     if SNR_threshold is not None:
         # Extract dB float value
         SNR_threshold = extract_dB(SNR_threshold)
 
-    # Compute Sv_noise
-    Sv_noise = estimate_background_noise(
-        ds_Sv, ping_num, range_sample_num, background_noise_max=background_noise_max
-    )
+    noise_max_dB = None
+    if background_noise_max is not None:
+        noise_max_dB = extract_dB(background_noise_max)
 
-    # Correct Sv for noise
-    linear_corrected_Sv = _log2lin(ds_Sv["Sv"]) - _log2lin(Sv_noise)
-    corrected_Sv = _lin2log(linear_corrected_Sv.where(linear_corrected_Sv > 0, other=np.nan))
-    corrected_Sv = corrected_Sv.where(corrected_Sv - Sv_noise > SNR_threshold, other=np.nan)
+    _do_gpu = resolve_use_gpu(use_gpu)
+
+    if _do_gpu:
+        from .gpu_noise_est import estimate_noise_gpu
+        from ..mask.gpu_mask import noise_corrected_sv_gpu
+
+        # GPU path: operate per channel on 2-D numpy arrays
+        sv_da = ds_Sv["Sv"]
+        echo_range = ds_Sv["echo_range"]
+        spreading_loss_da = 20 * np.log10(echo_range.where(echo_range >= 1, other=1))
+        absorption_loss_da = 2 * ds_Sv["sound_absorption"] * echo_range
+
+        channels = sv_da["channel"].values if "channel" in sv_da.dims else [None]
+        noise_list, corr_list = [], []
+        for ch in channels:
+            if ch is not None:
+                sv_ch = sv_da.sel(channel=ch).values
+                sl_ch = spreading_loss_da.sel(channel=ch).values
+                al_ch = absorption_loss_da.sel(channel=ch).values
+            else:
+                sv_ch = sv_da.values
+                sl_ch = spreading_loss_da.values
+                al_ch = absorption_loss_da.values
+
+            sv_noise_ch = estimate_noise_gpu(
+                sv_ch, echo_range.sel(channel=ch).values if ch is not None else echo_range.values,
+                sl_ch, al_ch, ping_num, range_sample_num, noise_max=noise_max_dB,
+            )
+            sv_corr_ch = noise_corrected_sv_gpu(sv_ch, sv_noise_ch)
+            # Apply SNR threshold
+            if SNR_threshold is not None:
+                snr = sv_ch - sv_noise_ch
+                sv_corr_ch = np.where(snr >= SNR_threshold, sv_corr_ch, np.nan)
+
+            noise_list.append(sv_noise_ch)
+            corr_list.append(sv_corr_ch)
+
+        # Reassemble into xarray matching the original coords
+        if "channel" in sv_da.dims:
+            noise_arr = np.stack(noise_list, axis=0)
+            corr_arr = np.stack(corr_list, axis=0)
+            Sv_noise = xr.DataArray(noise_arr, dims=sv_da.dims, coords=sv_da.coords)
+            corrected_Sv = xr.DataArray(corr_arr, dims=sv_da.dims, coords=sv_da.coords)
+        else:
+            Sv_noise = xr.DataArray(noise_list[0], dims=sv_da.dims, coords=sv_da.coords)
+            corrected_Sv = xr.DataArray(corr_list[0], dims=sv_da.dims, coords=sv_da.coords)
+
+        logger.info("remove_background_noise: used GPU path")
+    else:
+        # CPU / xarray path (original implementation)
+        Sv_noise = estimate_background_noise(
+            ds_Sv, ping_num, range_sample_num, background_noise_max=background_noise_max
+        )
+        linear_corrected_Sv = _log2lin(ds_Sv["Sv"]) - _log2lin(Sv_noise)
+        corrected_Sv = _lin2log(linear_corrected_Sv.where(linear_corrected_Sv > 0, other=np.nan))
+        corrected_Sv = corrected_Sv.where(
+            corrected_Sv - Sv_noise > SNR_threshold, other=np.nan
+        )
 
     # Assemble output dataset
     ds_Sv["Sv_noise"] = Sv_noise

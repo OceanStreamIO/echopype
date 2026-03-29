@@ -188,6 +188,37 @@ def gpu_norm_squared(arr):
 
 
 # ---------------------------------------------------------------------------
+# Parameter resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_use_gpu(use_gpu) -> bool:
+    """Resolve a ``use_gpu`` API parameter to a concrete boolean.
+
+    Parameters
+    ----------
+    use_gpu : bool or {"auto"}
+        * ``"auto"`` — use GPU when CuPy + CUDA are available.
+        * ``True``   — require GPU; raise if unavailable.
+        * ``False``  — force CPU.
+
+    Returns
+    -------
+    bool
+    """
+    if use_gpu == "auto":
+        return has_cuda()
+    if use_gpu is True:
+        if not has_cuda():
+            raise RuntimeError(
+                "use_gpu=True but CUDA/CuPy is not available. "
+                "Install cupy-cuda12x or set use_gpu='auto'."
+            )
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
 
@@ -197,7 +228,12 @@ def gpu_info() -> dict:
     info = {"cuda_available": has_cuda(), "cupy_installed": _HAS_CUPY}
     if has_cuda():
         dev = cp.cuda.Device()
-        info["device_name"] = dev.attributes["DeviceName"] if hasattr(dev, "attributes") else str(dev)
+        try:
+            props = cp.cuda.runtime.getDeviceProperties(dev.id)
+            name = props.get("name", b"unknown")
+            info["device_name"] = name.decode() if isinstance(name, bytes) else str(name)
+        except Exception:
+            info["device_name"] = str(dev)
         info["compute_capability"] = dev.compute_capability
         mem = dev.mem_info
         info["free_memory_mb"] = round(mem[0] / 1024**2)

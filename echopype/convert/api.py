@@ -1,8 +1,11 @@
+from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import dask.array
 import fsspec
+import numpy as np
+import xarray as xr
 from xarray import DataTree
 
 # fmt: off
@@ -16,7 +19,7 @@ from ..echodata.echodata import XARRAY_ENGINE_MAP, EchoData
 from ..utils import io
 from ..utils.coding import COMPRESSION_SETTINGS, sanitize_dtypes, set_storage_encodings
 from ..utils.log import _init_logger
-from ..utils.prov import add_processing_level
+from ..utils.prov import add_processing_level, echopype_prov_attrs, source_files_vars
 
 BEAM_SUBGROUP_DEFAULT = "Beam_group1"
 
@@ -510,6 +513,433 @@ def open_raw(
     # TODO: make the creation of tree dynamically generated from yaml
     tree = DataTree.from_dict(tree_dict, name="root")
     echodata = EchoData(source_file=file_chk, xml_path=xml_chk, sonar_model=sonar_model)
+    echodata._set_tree(tree)
+    echodata._load_tree()
+
+    return echodata
+
+
+# ---------------------------------------------------------------------------
+# open_raw_multi — batch loader for multiple raw files
+# ---------------------------------------------------------------------------
+
+def _accumulate_parser_data(parser, accum, sorted_ch_all, sorted_ch_pc):
+    """Extract per-file parsed data into accumulator lists.
+
+    Parameters
+    ----------
+    parser : ParseEK
+        Parser after parse_raw() + rectangularize_data().
+    accum : dict
+        Accumulator with keys for each data category.
+    sorted_ch_all : list
+        Sorted list of all channel IDs (set on first file).
+    sorted_ch_pc : list
+        Sorted list of power/complex channel IDs.
+    """
+    pdd = parser.ping_data_dict
+
+    for ch in sorted_ch_pc:
+        # Backscatter data (complex or power)
+        has_data = False
+        if ch in (parser.ch_ids.get("complex", [])):
+            data = pdd.get("complex", {}).get(ch)
+            if isinstance(data, dict):
+                accum["complex_real"][ch].append(data["real"])
+                accum["complex_imag"][ch].append(data["imag"])
+                has_data = True
+        elif ch in (parser.ch_ids.get("power", [])):
+            power_data = pdd.get("power", {}).get(ch)
+            if power_data is not None:
+                accum["power"][ch].append(power_data)
+                angle_data = pdd.get("angle", {}).get(ch)
+                if angle_data is not None and ch in parser.ch_ids.get("angle", []):
+                    accum["angle"][ch].append(angle_data)
+                has_data = True
+
+        if not has_data:
+            continue
+
+        # Per-ping beam metadata (only if we have backscatter data for this channel)
+        accum["ping_time"][ch].append(parser.ping_time[ch])
+        for key in [
+            "sample_interval", "transmit_power", "slope",
+            "channel_mode", "pulse_form", "offset",
+        ]:
+            if key in pdd and ch in pdd[key]:
+                accum["ping_meta"][key][ch].append(np.asarray(pdd[key][ch]))
+
+        # Pulse length/duration
+        for key in ["pulse_length", "pulse_duration"]:
+            if key in pdd and ch in pdd[key]:
+                accum["ping_meta"]["pulse_duration"][ch].append(
+                    np.asarray(pdd[key][ch], dtype="float32")
+                )
+                break
+
+        # Frequency start/end for BB data
+        if "frequency_start" in pdd and ch in pdd["frequency_start"]:
+            accum["ping_meta"]["frequency_start"][ch].append(
+                np.asarray(pdd["frequency_start"][ch])
+            )
+            accum["ping_meta"]["frequency_end"][ch].append(
+                np.asarray(pdd["frequency_end"][ch])
+            )
+
+    # Transmit pulse (RAW4) data
+    if hasattr(parser, "ping_data_dict_tx") and "complex" in parser.ping_data_dict_tx:
+        for ch in sorted_ch_pc:
+            if ch in parser.ping_data_dict_tx["complex"]:
+                tx_data = parser.ping_data_dict_tx["complex"][ch]
+                if isinstance(tx_data, dict):
+                    accum["tx_real"][ch].append(tx_data["real"])
+                    accum["tx_imag"][ch].append(tx_data["imag"])
+
+    # NMEA
+    accum["nmea_strings"].extend(parser.nmea.get("nmea_string", []))
+    accum["nmea_timestamps"].extend(parser.nmea.get("timestamp", []))
+
+    # MRU0
+    for key in ["timestamp", "pitch", "roll", "heave", "heading"]:
+        accum["mru0"][key].extend(parser.mru0.get(key, []))
+
+    # MRU1
+    for key in ["timestamp", "latitude", "longitude"]:
+        accum["mru1"][key].extend(parser.mru1.get(key, []))
+
+
+def _concat_pad(arrays, axis=0):
+    """Concatenate arrays, padding along axis=1 if shapes differ."""
+    if not arrays:
+        return None
+    shapes_1 = [a.shape[1] for a in arrays]
+    max_s1 = max(shapes_1)
+    if all(s == max_s1 for s in shapes_1):
+        return np.concatenate(arrays, axis=axis)
+
+    padded = []
+    for a in arrays:
+        if a.shape[1] < max_s1:
+            pad_width = [(0, 0)] * a.ndim
+            pad_width[1] = (0, max_s1 - a.shape[1])
+            a = np.pad(a, pad_width, constant_values=np.nan)
+        padded.append(a)
+    return np.concatenate(padded, axis=axis)
+
+
+def _build_combined_parser(accum, first_parser, sorted_ch_all, sorted_ch_pc):
+    """Build a synthetic parser object with combined data for set_groups.
+
+    Rather than calling set_groups per file, we concatenate the parsed numpy
+    data across all files and stuff it back into a parser-like object so
+    SetGroupsEK80 can build the xr.Datasets once on the combined data.
+    """
+    # Shallow copy to preserve config_datagram, environment, fil_coeffs, etc.
+    import copy
+    combined = copy.copy(first_parser)
+
+    # Combined ping_time
+    combined.ping_time = {}
+    for ch in sorted_ch_pc:
+        if accum["ping_time"][ch]:
+            combined.ping_time[ch] = np.concatenate(accum["ping_time"][ch])
+        else:
+            combined.ping_time[ch] = np.array([], dtype="datetime64[ns]")
+
+    # Combined ping_data_dict
+    combined.ping_data_dict = defaultdict(lambda: defaultdict(list))
+
+    # Complex backscatter
+    for ch in sorted_ch_pc:
+        if accum["complex_real"][ch]:
+            combined.ping_data_dict["complex"][ch] = {
+                "real": _concat_pad(accum["complex_real"][ch]),
+                "imag": _concat_pad(accum["complex_imag"][ch]),
+            }
+        elif accum["power"][ch]:
+            combined.ping_data_dict["power"][ch] = _concat_pad(accum["power"][ch])
+            if accum["angle"][ch]:
+                combined.ping_data_dict["angle"][ch] = _concat_pad(accum["angle"][ch])
+
+    # Per-ping metadata
+    for key in [
+        "sample_interval", "transmit_power", "slope",
+        "channel_mode", "pulse_form", "offset",
+    ]:
+        for ch in sorted_ch_pc:
+            if accum["ping_meta"][key][ch]:
+                combined.ping_data_dict[key][ch] = np.concatenate(
+                    accum["ping_meta"][key][ch]
+                )
+
+    # Pulse duration
+    for ch in sorted_ch_pc:
+        if accum["ping_meta"]["pulse_duration"][ch]:
+            combined.ping_data_dict["pulse_duration"][ch] = np.concatenate(
+                accum["ping_meta"]["pulse_duration"][ch]
+            )
+            combined.ping_data_dict["pulse_length"][ch] = (
+                combined.ping_data_dict["pulse_duration"][ch]
+            )
+
+    # Frequency start/end
+    for ch in sorted_ch_pc:
+        if accum["ping_meta"]["frequency_start"][ch]:
+            combined.ping_data_dict["frequency_start"][ch] = np.concatenate(
+                accum["ping_meta"]["frequency_start"][ch]
+            )
+            combined.ping_data_dict["frequency_end"][ch] = np.concatenate(
+                accum["ping_meta"]["frequency_end"][ch]
+            )
+
+    # Transmit pulse (RAW4)
+    combined.ping_data_dict_tx = defaultdict(lambda: defaultdict(list))
+    for ch in sorted_ch_pc:
+        if accum["tx_real"][ch]:
+            combined.ping_data_dict_tx["complex"][ch] = {
+                "real": _concat_pad(accum["tx_real"][ch]),
+                "imag": _concat_pad(accum["tx_imag"][ch]),
+            }
+
+    # ch_ids — must be a defaultdict for SetGroupsEK80 compatibility
+    combined.ch_ids = defaultdict(list, first_parser.ch_ids)
+
+    # NMEA
+    combined.nmea = {
+        "nmea_string": accum["nmea_strings"],
+        "timestamp": accum["nmea_timestamps"],
+    }
+
+    # MRU0
+    combined.mru0 = {k: v for k, v in accum["mru0"].items()}
+
+    # MRU1
+    combined.mru1 = {k: v for k, v in accum["mru1"].items()}
+
+    # bot/idx — not supported in multi mode
+    combined.bot = defaultdict(list)
+    combined.idx = defaultdict(list)
+    combined.bot_file = ""
+    combined.idx_file = ""
+
+    return combined
+
+
+@add_processing_level("L1A", is_echodata=True)
+def open_raw_multi(
+    raw_files: Sequence["PathHint"],
+    sonar_model: "SonarModelsHint",
+    xml_path: Optional["PathHint"] = None,
+    convert_params: Optional[Dict[str, str]] = None,
+    storage_options: Optional[Dict[str, str]] = None,
+) -> EchoData:
+    """Create an EchoData object by batch-parsing multiple raw files.
+
+    Parses all files into numpy arrays first, concatenates at the array level,
+    then builds the xarray/DataTree structure once. This is significantly
+    faster than calling ``open_raw`` per file and then ``combine_echodata``,
+    because it avoids per-file xarray Dataset construction and the subsequent
+    re-concatenation.
+
+    Currently supports EK80, ES80, and EA640 sonar models (EK60/ES70 planned).
+
+    Parameters
+    ----------
+    raw_files : sequence of str or Path
+        Paths to raw data files. Files are processed in the order given.
+    sonar_model : str
+        Sonar model (``'EK80'``, ``'ES80'``, ``'EA640'``).
+    xml_path : str, optional
+        Path to XML config file (only for AZFP).
+    convert_params : dict, optional
+        Additional metadata parameters.
+    storage_options : dict, optional
+        Options for cloud storage.
+
+    Returns
+    -------
+    EchoData
+        Combined EchoData object with all files' data.
+
+    Raises
+    ------
+    ValueError
+        If no valid files are found or sonar_model is unsupported.
+    """
+    if sonar_model is None:
+        raise ValueError("Sonar model must be specified.")
+    sonar_model = sonar_model.upper()
+    if sonar_model not in SONAR_MODELS:
+        raise ValueError(
+            f"Unsupported echosounder model: {sonar_model}\n"
+            f"Must be one of: {list(SONAR_MODELS)}"
+        )
+    if sonar_model not in ("EK80", "ES80", "EA640", "EK60", "ES70"):
+        raise ValueError(
+            f"open_raw_multi currently supports EK60/ES70/EK80/ES80/EA640, "
+            f"got: {sonar_model}"
+        )
+    if convert_params is None:
+        convert_params = {}
+    storage_options = storage_options if storage_options is not None else {}
+
+    parser_class = SONAR_MODELS[sonar_model]["parser"]
+
+    # Accumulators
+    accum = {
+        "complex_real": defaultdict(list),
+        "complex_imag": defaultdict(list),
+        "power": defaultdict(list),
+        "angle": defaultdict(list),
+        "ping_time": defaultdict(list),
+        "ping_meta": defaultdict(lambda: defaultdict(list)),
+        "tx_real": defaultdict(list),
+        "tx_imag": defaultdict(list),
+        "nmea_strings": [],
+        "nmea_timestamps": [],
+        "mru0": defaultdict(list),
+        "mru1": defaultdict(list),
+    }
+
+    first_parser = None
+    sorted_ch_all = None
+    sorted_ch_pc = None
+    valid_files = []
+    skipped = 0
+
+    for raw_file in raw_files:
+        raw_file = str(raw_file)
+        try:
+            # Validate file
+            file_chk, xml_chk, _, _ = _check_file(
+                raw_file, sonar_model, xml_path,
+                include_bot=False, include_idx=False,
+                storage_options=storage_options,
+            )
+            parser = parser_class(
+                file_chk, file_meta=xml_chk, bot_file="", idx_file="",
+                storage_options=storage_options, sonar_model=sonar_model,
+            )
+            parser.parse_raw()
+            parser.rectangularize_data(use_swap=False)
+
+            # ch_ids is populated during rectangularize_data
+            if first_parser is None:
+                first_parser = parser
+                all_ch = list(parser.config_datagram["configuration"].keys())
+                sorted_ch_all = sorted(all_ch)
+                sorted_ch_pc = sorted(
+                    parser.ch_ids.get("power", []) + parser.ch_ids.get("complex", [])
+                )
+                # Deduplicate: power channels may overlap with complex channels
+                seen = set()
+                sorted_ch_pc = [
+                    x for x in sorted_ch_pc if not (x in seen or seen.add(x))
+                ]
+            else:
+                # Skip files with different channel configuration
+                this_ch = sorted(
+                    parser.ch_ids.get("power", []) + parser.ch_ids.get("complex", [])
+                )
+                this_seen = set()
+                this_ch = [x for x in this_ch if not (x in this_seen or this_seen.add(x))]
+                if this_ch != sorted_ch_pc:
+                    logger.warning(
+                        f"Skipping {raw_file}: channel mismatch "
+                        f"(expected {sorted_ch_pc}, got {this_ch})"
+                    )
+                    skipped += 1
+                    continue
+
+            _accumulate_parser_data(
+                parser, accum, sorted_ch_all, sorted_ch_pc
+            )
+            valid_files.append(file_chk)
+
+        except Exception as e:
+            logger.warning(f"Skipping {raw_file}: {e}")
+            skipped += 1
+
+    if first_parser is None or not valid_files:
+        raise ValueError(
+            f"No valid files found among {len(raw_files)} input files "
+            f"({skipped} skipped)."
+        )
+
+    logger.info(
+        f"Parsed {len(valid_files)} files ({skipped} skipped), "
+        f"building combined EchoData..."
+    )
+
+    # Build a combined parser-like object
+    combined_parser = _build_combined_parser(
+        accum, first_parser, sorted_ch_all, sorted_ch_pc
+    )
+
+    # Use SetGroups to build xr.Datasets once on combined data
+    setgrouper_class = SONAR_MODELS[sonar_model]["set_groups"]
+    setgrouper = setgrouper_class(
+        combined_parser,
+        input_file=valid_files[0],
+        xml_path=xml_path or "",
+        output_path=None,
+        sonar_model=sonar_model,
+        params=_set_convert_params(convert_params),
+    )
+
+    # Build tree_dict (same structure as open_raw)
+    tree_dict = {}
+    tree_dict["/"] = setgrouper.set_toplevel(
+        sonar_model=sonar_model,
+        date_created=first_parser.config_datagram["timestamp"],
+    )
+    tree_dict["Environment"] = setgrouper.set_env()
+    tree_dict["Platform"] = setgrouper.set_platform()
+    tree_dict["Platform/NMEA"] = setgrouper.set_nmea()
+
+    # Provenance: list all source files
+    prov_dict = echopype_prov_attrs(process_type="conversion")
+    files_vars = source_files_vars(valid_files)
+    if files_vars["meta_source_files_var"] is None:
+        source_vars = files_vars["source_files_var"]
+    else:
+        source_vars = {
+            **files_vars["source_files_var"],
+            **files_vars["meta_source_files_var"],
+        }
+    tree_dict["Provenance"] = xr.Dataset(
+        data_vars=source_vars,
+        coords=files_vars["source_files_coord"],
+        attrs=prov_dict,
+    )
+
+    tree_dict["Sonar"] = None
+    beam_groups = setgrouper.set_beam()
+    beam_group_type = []
+    for idx, beam_group in enumerate(beam_groups, start=1):
+        if beam_group is not None:
+            if idx == 1:
+                beam_group_type.append(
+                    "complex" if "backscatter_i" in beam_group else "power"
+                )
+            else:
+                beam_group_type.append(None)
+            tree_dict[f"Sonar/Beam_group{idx}"] = beam_group
+
+    if sonar_model in ("EK80", "ES80", "EA640"):
+        tree_dict["Sonar"] = setgrouper.set_sonar(beam_group_type=beam_group_type)
+    else:
+        tree_dict["Sonar"] = setgrouper.set_sonar()
+
+    tree_dict["Vendor_specific"] = setgrouper.set_vendor()
+
+    # Create tree and EchoData
+    tree = DataTree.from_dict(tree_dict, name="root")
+    echodata = EchoData(
+        source_file=valid_files[0],
+        xml_path=xml_path or "",
+        sonar_model=sonar_model,
+    )
     echodata._set_tree(tree)
     echodata._load_tree()
 

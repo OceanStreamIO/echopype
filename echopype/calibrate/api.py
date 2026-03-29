@@ -1,3 +1,4 @@
+import numpy as np
 import xarray as xr
 
 from ..echodata import EchoData
@@ -19,6 +20,103 @@ CALIBRATOR = {
 logger = _init_logger(__name__)
 
 
+def _to_vec(da, ch_idx, n_pings):
+    """Extract a 1-D ``(n_pings,)`` float64 vector from an xarray DataArray.
+
+    Handles DataArrays with or without a ``channel`` dimension and varying
+    dim order (e.g. ``transmit_power`` is ``(channel, ping_time)``).
+    """
+    if "channel" in da.dims:
+        v = da.isel(channel=ch_idx)
+    else:
+        v = da
+    val = np.atleast_1d(v.values.ravel()).astype(np.float64)
+    if val.size == 1:
+        val = np.full(n_pings, val[0])
+    return val
+
+
+def _compute_sv_gpu_ek80(echodata, cal_obj):
+    """GPU-accelerated Sv for EK80 CW complex mode.
+
+    Uses the already-initialised *cal_obj* (``CalibrateEK80``) to read
+    calibration parameters, then computes Sv per channel on GPU via
+    :func:`~echopype.calibrate.gpu_cal.compute_sv_from_complex_gpu`.
+
+    Returns an ``xr.Dataset`` with the same structure as the standard path.
+    """
+    from .ek80_complex import get_filter_coeff, get_tau_effective, get_transmit_signal
+    from .gpu_cal import compute_sv_from_complex_gpu
+    from .range import range_mod_TVG_EK
+
+    beam = echodata[cal_obj.ed_beam_group].sel(channel=cal_obj.chan_sel)
+    vend = echodata["Vendor_specific"].sel(channel=cal_obj.chan_sel)
+
+    # Calibration scalars
+    z_et = float(cal_obj.cal_params["impedance_transducer"].values.flat[0])
+    z_er = float(cal_obj.cal_params["impedance_transceiver"].values.flat[0])
+    n_beams = int(beam["beam"].size)
+
+    sound_speed_da = cal_obj.env_params["sound_speed"]
+    absorption_da = cal_obj.env_params["sound_absorption"]
+    range_meter = cal_obj.range_meter
+    tvg_mod = range_mod_TVG_EK(echodata, cal_obj.ed_beam_group, range_meter, sound_speed_da)
+
+    # Effective pulse length
+    tx_coeff = get_filter_coeff(vend)
+    fs = cal_obj.cal_params["receiver_sampling_frequency"]
+    tx, tx_time = get_transmit_signal(beam, tx_coeff, "CW", fs)
+    tau_eff = get_tau_effective(
+        ytx_dict=tx,
+        fs_deci_dict={k: 1 / np.diff(v[:2]) for (k, v) in tx_time.items()},
+        waveform_mode="CW",
+        channel=cal_obj.chan_sel,
+        ping_time=beam["ping_time"],
+    )
+    ch_GPT = (vend["transceiver_type"] == "GPT").compute()
+    tau_eff[ch_GPT] = beam["transmit_duration_nominal"][ch_GPT].isel(ping_time=0)
+
+    # Per-channel GPU Sv
+    n_channels = beam.sizes["channel"]
+    n_pings = beam.sizes["ping_time"]
+    n_range = beam.sizes["range_sample"]
+    sv_all = np.empty((n_channels, n_pings, n_range), dtype=np.float64)
+
+    for ch in range(n_channels):
+        sv_all[ch] = compute_sv_from_complex_gpu(
+            beam["backscatter_r"].isel(channel=ch).values,
+            beam["backscatter_i"].isel(channel=ch).values,
+            tvg_mod.isel(channel=ch).values,
+            _to_vec(sound_speed_da, ch, n_pings),
+            _to_vec(absorption_da, ch, n_pings),
+            _to_vec(cal_obj.freq_center, ch, n_pings),
+            _to_vec(beam["transmit_power"], ch, n_pings),
+            _to_vec(cal_obj.cal_params["gain_correction"], ch, n_pings),
+            _to_vec(cal_obj.cal_params["equivalent_beam_angle"], ch, n_pings),
+            _to_vec(cal_obj.cal_params["sa_correction"], ch, n_pings),
+            _to_vec(tau_eff, ch, n_pings),
+            z_et, z_er, n_beams,
+        )
+
+    # Assemble output Dataset matching the standard calibration format
+    sv_da = xr.DataArray(
+        sv_all,
+        dims=["channel", "ping_time", "range_sample"],
+        coords={
+            "channel": beam["channel"],
+            "ping_time": beam["ping_time"],
+            "range_sample": beam["range_sample"],
+        },
+        name="Sv",
+    )
+    ds = sv_da.to_dataset()
+    ds = ds.merge(range_meter)
+    ds["frequency_nominal"] = beam["frequency_nominal"]
+    ds = cal_obj._add_params_to_output(ds)
+
+    return ds
+
+
 def _compute_cal(
     cal_type,
     echodata: EchoData,
@@ -27,6 +125,7 @@ def _compute_cal(
     ecs_file=None,
     waveform_mode=None,
     encode_mode=None,
+    use_gpu="auto",
 ):
     # Make waveform_mode "FM" equivalent to "BB"
     waveform_mode = "BB" if waveform_mode == "FM" else waveform_mode
@@ -61,8 +160,20 @@ def _compute_cal(
     # Check Echodata Backscatter Size
     cal_obj._check_echodata_backscatter_size()
 
-    # Perform calibration
-    if cal_type == "Sv":
+    # Perform calibration — optionally via GPU
+    from ..utils.gpu import resolve_use_gpu
+
+    _do_gpu = resolve_use_gpu(use_gpu)
+    if (
+        _do_gpu
+        and cal_type == "Sv"
+        and echodata.sonar_model in ("EK80", "ES80", "EA640")
+        and waveform_mode == "CW"
+        and encode_mode == "complex"
+    ):
+        cal_ds = _compute_sv_gpu_ek80(echodata, cal_obj)
+        logger.info("compute_Sv: used GPU path (EK80 CW complex)")
+    elif cal_type == "Sv":
         cal_ds = cal_obj.compute_Sv()
     elif cal_type == "TS":
         cal_ds = cal_obj.compute_TS()
@@ -119,7 +230,7 @@ def _compute_cal(
     return cal_ds
 
 
-def compute_Sv(echodata: EchoData, **kwargs) -> xr.Dataset:
+def compute_Sv(echodata: EchoData, use_gpu="auto", **kwargs) -> xr.Dataset:
     """
     Compute volume backscattering strength (Sv) from raw data.
 
@@ -131,6 +242,16 @@ def compute_Sv(echodata: EchoData, **kwargs) -> xr.Dataset:
     ----------
     echodata : EchoData
         An `EchoData` object created by using `open_raw` or `open_converted`
+
+    use_gpu : bool or {"auto"}, default "auto"
+        GPU acceleration strategy:
+
+        * ``"auto"`` — use GPU when CuPy + CUDA are available (transparent).
+        * ``True``   — require GPU; raises ``RuntimeError`` if unavailable.
+        * ``False``  — force CPU-only computation.
+
+        Currently GPU-accelerated for EK80/ES80/EA640 with
+        ``waveform_mode="CW"`` and ``encode_mode="complex"``.
 
     env_params : dict, optional
         Environmental parameters needed for calibration.
@@ -205,7 +326,7 @@ def compute_Sv(echodata: EchoData, **kwargs) -> xr.Dataset:
     EchoData object provided, if it exists. If `water_level` is not returned,
     it must be set using `EchoData.update_platform()`.
     """
-    return _compute_cal(cal_type="Sv", echodata=echodata, **kwargs)
+    return _compute_cal(cal_type="Sv", echodata=echodata, use_gpu=use_gpu, **kwargs)
 
 
 def compute_TS(echodata: EchoData, **kwargs):

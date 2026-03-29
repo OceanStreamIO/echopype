@@ -8,6 +8,7 @@ paths inside the GPU modules.
 
 import numpy as np
 import pytest
+from pathlib import Path
 
 from echopype.utils.gpu import (
     _conv_output_len,
@@ -339,6 +340,75 @@ class TestGPUMask:
 
 
 # ===========================================================================
+# GPU Sv computation from complex samples
+# ===========================================================================
+
+
+@pytest.mark.unit
+class TestGPUCal:
+    """Tests for echopype.calibrate.gpu_cal — GPU Sv computation."""
+
+    def test_compute_sv_shape_and_finite(self, rng):
+        """Output shape matches (n_pings, n_range) and values are finite where expected."""
+        from echopype.calibrate.gpu_cal import compute_sv_from_complex_gpu
+
+        n_pings, n_range, n_beams = 100, 500, 3
+        bs_r = rng.standard_normal((n_pings, n_range, n_beams))
+        bs_i = rng.standard_normal((n_pings, n_range, n_beams))
+        echo_range = np.broadcast_to(
+            np.linspace(1.0, 300.0, n_range)[np.newaxis, :], (n_pings, n_range)
+        ).copy()
+        tvg_mod_range = echo_range.copy()
+
+        Sv = compute_sv_from_complex_gpu(
+            bs_r, bs_i, tvg_mod_range,
+            sound_speed=np.full(n_pings, 1500.0),
+            absorption=np.full(n_pings, 0.01),
+            frequency=np.full(n_pings, 38000.0),
+            transmit_power=np.full(n_pings, 2000.0),
+            gain_correction=np.full(n_pings, 25.0),
+            equivalent_beam_angle=np.full(n_pings, -20.7),
+            sa_correction=np.full(n_pings, 0.0),
+            tau_effective=np.full(n_pings, 0.001024),
+            z_et=75.0, z_er=1000.0, n_beams=n_beams,
+        )
+        assert Sv.shape == (n_pings, n_range)
+        # At least 90% of values should be finite (some near-zero range may be NaN)
+        assert np.isfinite(Sv).mean() > 0.9
+
+    def test_gpu_matches_numpy(self, rng):
+        """GPU and CPU paths produce identical results."""
+        from echopype.calibrate.gpu_cal import _compute_sv_cupy, _compute_sv_numpy
+
+        if not has_cuda():
+            pytest.skip("CuPy not available")
+
+        n_pings, n_range, n_beams = 50, 200, 3
+        bs_r = rng.standard_normal((n_pings, n_range, n_beams))
+        bs_i = rng.standard_normal((n_pings, n_range, n_beams))
+        tvg_mod_range = np.broadcast_to(
+            np.linspace(1.0, 200.0, n_range)[np.newaxis, :], (n_pings, n_range)
+        ).copy()
+
+        params = dict(
+            sound_speed=np.full(n_pings, 1500.0),
+            absorption=np.full(n_pings, 0.01),
+            frequency=np.full(n_pings, 200000.0),
+            transmit_power=np.full(n_pings, 1000.0),
+            gain_correction=np.full(n_pings, 22.0),
+            equivalent_beam_angle=np.full(n_pings, -20.7),
+            sa_correction=np.full(n_pings, 0.0),
+            tau_effective=np.full(n_pings, 0.000512),
+        )
+
+        sv_cpu = _compute_sv_numpy(bs_r, bs_i, tvg_mod_range, **params,
+                                   z_et=75.0, z_er=1000.0, n_beams=n_beams)
+        sv_gpu = _compute_sv_cupy(bs_r, bs_i, tvg_mod_range, **params,
+                                  z_et=75.0, z_er=1000.0, n_beams=n_beams)
+        np.testing.assert_allclose(sv_gpu, sv_cpu, rtol=1e-10)
+
+
+# ===========================================================================
 # Integration-like: full pipeline smoke test
 # ===========================================================================
 
@@ -382,3 +452,231 @@ class TestGPUPipelineSmoke:
         assert mvbs.ndim == 2
         assert mvbs.shape[0] == 10  # 200/20
         assert mvbs.shape[1] == 8  # 400/50
+
+
+# ===========================================================================
+# resolve_use_gpu helper
+# ===========================================================================
+
+
+@pytest.mark.unit
+class TestResolveUseGPU:
+    """Tests for echopype.utils.gpu.resolve_use_gpu."""
+
+    def test_auto_returns_bool(self):
+        from echopype.utils.gpu import resolve_use_gpu
+
+        result = resolve_use_gpu("auto")
+        assert isinstance(result, bool)
+
+    def test_false_always_false(self):
+        from echopype.utils.gpu import resolve_use_gpu
+
+        assert resolve_use_gpu(False) is False
+
+    def test_true_with_cuda(self):
+        from echopype.utils.gpu import has_cuda, resolve_use_gpu
+
+        if has_cuda():
+            assert resolve_use_gpu(True) is True
+        else:
+            with pytest.raises(RuntimeError, match="CUDA/CuPy is not available"):
+                resolve_use_gpu(True)
+
+
+# ===========================================================================
+# Public API: use_gpu parameter on compute_MVBS_index_binning
+# ===========================================================================
+
+
+@pytest.mark.unit
+class TestMVBSIndexBinningGPUAPI:
+    """Verify compute_MVBS_index_binning with use_gpu produces correct output."""
+
+    def test_gpu_output_structure(self, rng):
+        """GPU path returns Dataset with Sv, echo_range, correct dims."""
+        import xarray as xr
+        from echopype.commongrid.api import compute_MVBS_index_binning
+
+        n_ch, n_ping, n_range = 2, 200, 400
+        Sv = rng.standard_normal((n_ch, n_ping, n_range)) * 10 - 65
+        echo_range = np.broadcast_to(
+            np.linspace(1.0, 300.0, n_range)[np.newaxis, np.newaxis, :],
+            (n_ch, n_ping, n_range),
+        ).copy()
+
+        ds = xr.Dataset(
+            {"Sv": (["channel", "ping_time", "range_sample"], Sv),
+             "echo_range": (["channel", "ping_time", "range_sample"], echo_range),
+             "frequency_nominal": ("channel", [38000.0, 200000.0])},
+            coords={
+                "channel": ["ch1", "ch2"],
+                "ping_time": np.arange(n_ping),
+                "range_sample": np.arange(n_range),
+            },
+        )
+
+        # GPU path (falls back to CPU if no CUDA — same function, just exercises the branch)
+        result = compute_MVBS_index_binning(
+            ds, ping_num=20, range_sample_num=50, use_gpu="auto",
+        )
+        assert "Sv" in result
+        assert "echo_range" in result
+        assert result["Sv"].dims[0] == "channel"
+
+    def test_cpu_fallback(self, rng):
+        """use_gpu=False forces the original xarray path."""
+        import xarray as xr
+        from echopype.commongrid.api import compute_MVBS_index_binning
+
+        n_ping, n_range = 200, 400
+        Sv = rng.standard_normal((1, n_ping, n_range)) * 10 - 65
+        echo_range = np.broadcast_to(
+            np.linspace(1.0, 300.0, n_range)[np.newaxis, np.newaxis, :],
+            (1, n_ping, n_range),
+        ).copy()
+
+        ds = xr.Dataset(
+            {"Sv": (["channel", "ping_time", "range_sample"], Sv),
+             "echo_range": (["channel", "ping_time", "range_sample"], echo_range),
+             "frequency_nominal": ("channel", [38000.0])},
+            coords={
+                "channel": ["ch1"],
+                "ping_time": np.arange(n_ping),
+                "range_sample": np.arange(n_range),
+            },
+        )
+
+        result = compute_MVBS_index_binning(
+            ds, ping_num=20, range_sample_num=50, use_gpu=False,
+        )
+        assert "Sv" in result
+        # CPU coarsen with boundary="pad" may produce ceil(n/bin) bins
+        assert result["Sv"].sizes["ping_time"] == 10  # 200/20
+
+
+# ===========================================================================
+# Public API: use_gpu parameter on remove_background_noise
+# ===========================================================================
+
+
+@pytest.mark.unit
+class TestRemoveNoiseGPUAPI:
+    """Verify remove_background_noise with use_gpu produces correct output."""
+
+    def test_gpu_output_has_corrected_and_noise(self, rng):
+        """GPU path adds Sv_noise and Sv_corrected to the dataset."""
+        import xarray as xr
+        from echopype.clean.api import remove_background_noise
+
+        n_ch, n_ping, n_range = 2, 200, 400
+        Sv = rng.standard_normal((n_ch, n_ping, n_range)) * 10 - 65
+        echo_range = np.broadcast_to(
+            np.linspace(1.0, 300.0, n_range)[np.newaxis, np.newaxis, :],
+            (n_ch, n_ping, n_range),
+        ).copy()
+
+        ds = xr.Dataset(
+            {"Sv": (["channel", "ping_time", "range_sample"], Sv),
+             "echo_range": (["channel", "ping_time", "range_sample"], echo_range),
+             "sound_absorption": ("channel", [0.01, 0.02]),
+             "frequency_nominal": ("channel", [38000.0, 200000.0])},
+            coords={
+                "channel": ["ch1", "ch2"],
+                "ping_time": np.arange(n_ping),
+                "range_sample": np.arange(n_range),
+            },
+        )
+
+        result = remove_background_noise(
+            ds, ping_num=20, range_sample_num=50, use_gpu="auto",
+        )
+        assert "Sv_noise" in result
+        assert "Sv_corrected" in result
+        assert result["Sv_noise"].shape == (n_ch, n_ping, n_range)
+        assert result["Sv_corrected"].shape == (n_ch, n_ping, n_range)
+
+
+# ===========================================================================
+# open_raw_multi — batch loader
+# ===========================================================================
+
+BENCHMARK_DIR = Path(__file__).resolve().parents[2] / "benchmark_data"
+HAS_BENCHMARK_DATA = BENCHMARK_DIR.exists() and any(BENCHMARK_DIR.glob("*.raw"))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not HAS_BENCHMARK_DATA, reason="No benchmark_data/*.raw files")
+class TestOpenRawMulti:
+    """Verify open_raw_multi produces identical results to open_raw + combine."""
+
+    @pytest.fixture(scope="class")
+    def bench_files(self):
+        return sorted(BENCHMARK_DIR.glob("*D20230530*.raw"))[:10]
+
+    @pytest.fixture(scope="class")
+    def baseline_ed(self, bench_files):
+        """Baseline via open_raw + combine_echodata."""
+        import echopype as ep
+
+        eds = []
+        for f in bench_files:
+            try:
+                ed = ep.open_raw(f, sonar_model="EK80")
+                beam = ed["Sonar/Beam_group1"]
+                if "backscatter_i" not in beam or beam.sizes.get("channel", 0) != 2:
+                    continue
+                eds.append(ed)
+            except Exception:
+                pass
+        return ep.combine_echodata(eds)
+
+    @pytest.fixture(scope="class")
+    def multi_ed(self, bench_files):
+        """Result via open_raw_multi."""
+        import echopype as ep
+
+        return ep.open_raw_multi(bench_files, sonar_model="EK80")
+
+    def test_beam_shape_matches(self, baseline_ed, multi_ed):
+        b1 = baseline_ed["Sonar/Beam_group1"]
+        b2 = multi_ed["Sonar/Beam_group1"]
+        assert b1.sizes["channel"] == b2.sizes["channel"]
+        assert b1.sizes["ping_time"] == b2.sizes["ping_time"]
+        assert b1.sizes["range_sample"] == b2.sizes["range_sample"]
+
+    def test_backscatter_identical(self, baseline_ed, multi_ed):
+        b1 = baseline_ed["Sonar/Beam_group1"]
+        b2 = multi_ed["Sonar/Beam_group1"]
+        np.testing.assert_array_equal(
+            b1["backscatter_r"].values, b2["backscatter_r"].values
+        )
+        np.testing.assert_array_equal(
+            b1["backscatter_i"].values, b2["backscatter_i"].values
+        )
+
+    def test_ping_time_identical(self, baseline_ed, multi_ed):
+        pt1 = baseline_ed["Sonar/Beam_group1"]["ping_time"].values
+        pt2 = multi_ed["Sonar/Beam_group1"]["ping_time"].values
+        np.testing.assert_array_equal(pt1, pt2)
+
+    def test_vendor_params_match(self, baseline_ed, multi_ed):
+        v1 = baseline_ed["Vendor_specific"]
+        v2 = multi_ed["Vendor_specific"]
+        for var in ["sa_correction", "gain_correction", "pulse_length"]:
+            np.testing.assert_array_equal(v1[var].values, v2[var].values)
+
+    def test_compute_sv_matches(self, baseline_ed, multi_ed):
+        import echopype as ep
+
+        sv1 = ep.calibrate.compute_Sv(
+            baseline_ed, waveform_mode="CW", encode_mode="complex"
+        )
+        sv2 = ep.calibrate.compute_Sv(
+            multi_ed, waveform_mode="CW", encode_mode="complex"
+        )
+        valid = ~np.isnan(sv1["Sv"].values) & ~np.isnan(sv2["Sv"].values)
+        assert valid.any()
+        np.testing.assert_allclose(
+            sv1["Sv"].values[valid], sv2["Sv"].values[valid], rtol=0, atol=0
+        )
