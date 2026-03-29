@@ -7,6 +7,16 @@ import xarray as xr
 from scipy import signal
 
 from ..convert.set_groups_ek80 import DECIMATION, FILTER_IMAG, FILTER_REAL
+from ..utils.gpu import (
+    gpu_fftconvolve,
+    gpu_signal_convolve,
+    has_cuda,
+    to_cpu,
+    to_gpu,
+)
+from ..utils.log import _init_logger
+
+logger = _init_logger(__name__)
 
 
 def tapered_chirp(
@@ -62,9 +72,9 @@ def filter_decimate_chirp(coeff_ch: Dict, y_ch: np.array, fs: float):
 
     # WBT filter and decimation
     try:
-        ytx_wbt = signal.convolve(y_ch, coeff_ch["wbt_fil"])
+        ytx_wbt = gpu_signal_convolve(y_ch, coeff_ch["wbt_fil"])
     except ValueError:
-        ytx_wbt = signal.convolve(y_ch, coeff_ch["wbt_fil"].flatten())
+        ytx_wbt = gpu_signal_convolve(y_ch, coeff_ch["wbt_fil"].flatten())
 
     # Handle the wbt_decifac array
     if isinstance(coeff_ch["wbt_decifac"], np.ndarray):
@@ -77,9 +87,9 @@ def filter_decimate_chirp(coeff_ch: Dict, y_ch: np.array, fs: float):
 
     # PC filter and decimation
     try:
-        ytx_pc = signal.convolve(ytx_wbt_deci, coeff_ch["pc_fil"])
+        ytx_pc = gpu_signal_convolve(ytx_wbt_deci, coeff_ch["pc_fil"])
     except ValueError:
-        ytx_pc = signal.convolve(ytx_wbt_deci, coeff_ch["pc_fil"].flatten())
+        ytx_pc = gpu_signal_convolve(ytx_wbt_deci, coeff_ch["pc_fil"].flatten())
 
     pc_decifac = coeff_ch["pc_decifac"]
     if isinstance(pc_decifac, np.ndarray):
@@ -199,7 +209,7 @@ def get_tau_effective(
     tau_effective = {}
     for ch, ytx in ytx_dict.items():
         if waveform_mode == "BB":
-            ytxa = signal.convolve(ytx, np.flip(np.conj(ytx))) / np.linalg.norm(ytx) ** 2
+            ytxa = gpu_fftconvolve(ytx, np.flip(np.conj(ytx))) / np.linalg.norm(ytx) ** 2
             ptxa = np.abs(ytxa) ** 2
         elif waveform_mode == "CW":
             ptxa = np.abs(ytx) ** 2  # energy of transmit signal
@@ -299,6 +309,8 @@ def _convolve_per_channel(backscatter_subset: np.ndarray, replica_dict: dict, ch
     When this function is used in `compress_pulse`, the array that is being sent
     as backscatter subset corresponds to a specific `ping_time` and `beam`, from
     the backscatter array.
+
+    Uses GPU-accelerated FFT convolution when CUDA is available.
     """
     # Return if all 0s
     if np.all(backscatter_subset == 0.0 + 0.0j):
@@ -310,10 +322,11 @@ def _convolve_per_channel(backscatter_subset: np.ndarray, replica_dict: dict, ch
         for ch_seq, channel in enumerate(channels):
             # Extract replica values
             replica = replica_dict[str(channel.values)]
-            # Convolve backscatter and chirp replica
-            convolved[:, ch_seq] = signal.convolve(
+            # GPU-accelerated FFT convolution
+            full_conv = gpu_fftconvolve(
                 backscatter_subset[:, ch_seq], replica, mode="full"
-            )[replica.size - 1 :]
+            )
+            convolved[:, ch_seq] = full_conv[replica.size - 1 :]
         return convolved
 
 
@@ -390,6 +403,12 @@ def get_norm_fac(chirp: Dict) -> xr.DataArray:
     norm_fac = []
     ch_all = []
     for ch, tx in chirp.items():
-        norm_fac.append(np.linalg.norm(tx) ** 2)
+        if has_cuda():
+            tx_gpu = to_gpu(np.asarray(tx))
+            import cupy as _cp
+
+            norm_fac.append(float(to_cpu(_cp.sum(_cp.abs(tx_gpu) ** 2))))
+        else:
+            norm_fac.append(np.linalg.norm(tx) ** 2)
         ch_all.append(ch)
     return xr.DataArray(norm_fac, coords={"channel": ch_all})
