@@ -204,12 +204,16 @@ class EchoData:
         combined_pattern = "|".join(re.escape(s) for s in kongsberg_sonar_model)
         is_kongsberg = bool(re.search(combined_pattern, top_check.attrs["keywords"]))
         if is_kongsberg:
-            nmea_check = xr.open_dataset(
-                converted_raw_path,
-                group="Platform/NMEA",
-                engine=XARRAY_ENGINE_MAP[suffix],
-                **echodata.open_kwargs,
-            )
+            try:
+                nmea_check = xr.open_dataset(
+                    converted_raw_path,
+                    group="Platform/NMEA",
+                    engine=XARRAY_ENGINE_MAP[suffix],
+                    **echodata.open_kwargs,
+                )
+            except (FileNotFoundError, OSError, KeyError):
+                # Platform/NMEA may not exist (e.g. UDP-recorded data without GPS)
+                nmea_check = xr.Dataset()
 
         sonar_check = xr.open_dataset(
             converted_raw_path,
@@ -240,7 +244,7 @@ class EchoData:
                 temp_tree["/Sonar"] = sonar
 
             # Update Platform/NMEA/time1 to Platform/NMEA/nmea_time for only Kongberg model
-            if is_kongsberg:
+            if is_kongsberg and "/Platform/NMEA" in temp_tree:
                 platform = temp_tree["/Platform/NMEA"]
                 if "time1" in platform.coords:
                     platform = platform.rename({"time1": "nmea_time"})

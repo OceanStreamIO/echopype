@@ -147,16 +147,12 @@ def sanitize_file_path(
         if ":/" in str(file_path):
             raise ValueError(f"{file_path} is not a valid posix path.")
 
-        if suffix == ".zarr":
-            return fsspec.get_mapper(str(file_path))
         return file_path
     elif isinstance(file_path, str):
         if "://" in file_path:
             if suffix == ".nc":
                 raise ValueError("Only local netcdf4 is supported.")
             return fsspec.get_mapper(file_path, **storage_options)
-        elif suffix == ".zarr":
-            return fsspec.get_mapper(file_path)
         else:
             return Path(file_path)
     elif isinstance(file_path, fsspec.FSMap):
