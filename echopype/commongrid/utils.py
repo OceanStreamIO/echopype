@@ -221,9 +221,20 @@ def get_distance_from_latlon(ds_Sv):
     numpy.ndarray
         Cumulative distance in nautical miles.
     """
+    # Collapse multi-dimensional lat/lon to 1D along ping_time.
+    # If lat/lon have extra dimensions (e.g., channel), select index 0;
+    # GPS position is physically identical across sonar channels.
+    lat = ds_Sv["latitude"]
+    lon = ds_Sv["longitude"]
+    for d in [d for d in lat.dims if d != "ping_time"]:
+        lat = lat.isel({d: 0})
+    for d in [d for d in lon.dims if d != "ping_time"]:
+        lon = lon.isel({d: 0})
+    pos_ds = xr.Dataset({"latitude": lat, "longitude": lon})
+
     # Convert to DataFrame and select only relevant columns
-    df_lat = ds_Sv[["latitude"]].to_dataframe().reset_index()[["ping_time", "latitude"]]
-    df_lon = ds_Sv[["longitude"]].to_dataframe().reset_index()[["ping_time", "longitude"]]
+    df_lat = pos_ds[["latitude"]].to_dataframe().reset_index()[["ping_time", "latitude"]]
+    df_lon = pos_ds[["longitude"]].to_dataframe().reset_index()[["ping_time", "longitude"]]
 
     # Merge latitude and longitude DataFrames
     df_pos = pd.merge(df_lat, df_lon, on="ping_time", how="inner")
@@ -510,8 +521,20 @@ def _get_reduced_positions(
             x_var = "distance_nmi"
             x_dim = "distance"
 
+        # Collapse multi-dimensional position variables to 1D along ping_time.
+        # GPS lat/lon are physically identical across sonar channels,
+        # so we select index 0 along any extra dimension (e.g., channel).
+        pos_vars = {}
+        for var in POSITION_VARIABLES:
+            da = ds_Sv[var]
+            extra_dims = [d for d in da.dims if d != "ping_time"]
+            if extra_dims:
+                da = da.isel({d: 0 for d in extra_dims})
+            pos_vars[var] = da
+        pos_ds = xr.Dataset(pos_vars)
+
         ds_Pos = xarray_reduce(
-            ds_Sv[POSITION_VARIABLES],
+            pos_ds,
             ds_Sv[x_var],
             func="nanmean",
             expected_groups=(x_interval),

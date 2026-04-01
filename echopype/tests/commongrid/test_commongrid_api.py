@@ -605,3 +605,75 @@ def test_compute_reindex_non_NaN_not_map_reduce(request):
         for reindex in [True, False]:
             with pytest.raises(ValueError, match=f"Passing in reindex={reindex} is only allowed when method='map_reduce'."):
                 ep.commongrid.compute_MVBS(ds_Sv, method=method, reindex=reindex)
+
+
+def _make_multidim_latlon_ds(n_pings=500, n_channels=2, n_depth=100, use_dask=True):
+    """Create a synthetic Sv dataset with multi-dimensional lat/lon (channel, ping_time)."""
+    import dask.array as da
+
+    rng = np.random.default_rng(42)
+    channels = [f"ch{i}" for i in range(n_channels)]
+    ping_time = pd.date_range("2023-01-01", periods=n_pings, freq="1s")
+
+    echo_range_data = np.tile(
+        np.linspace(0, 500, n_depth)[np.newaxis, np.newaxis, :],
+        (n_channels, n_pings, 1),
+    ) + rng.uniform(-0.5, 0.5, (n_channels, n_pings, n_depth))
+
+    Sv_data = rng.uniform(-80, -30, (n_channels, n_pings, n_depth))
+    if use_dask:
+        Sv_data = da.from_array(Sv_data, chunks=(n_channels, 100, n_depth))
+
+    # Multi-dim lat/lon: (channel, ping_time) — same GPS across channels
+    lat_1d = np.linspace(10, 11, n_pings)
+    lon_1d = np.linspace(-170, -169, n_pings)
+    lat_2d = np.tile(lat_1d[np.newaxis, :], (n_channels, 1))
+    lon_2d = np.tile(lon_1d[np.newaxis, :], (n_channels, 1))
+
+    ds_Sv = xr.Dataset(
+        data_vars={
+            "Sv": (["channel", "ping_time", "range_sample"], Sv_data),
+            "echo_range": (["channel", "ping_time", "range_sample"], echo_range_data),
+            "latitude": (["channel", "ping_time"], lat_2d),
+            "longitude": (["channel", "ping_time"], lon_2d),
+        },
+        coords={
+            "channel": channels,
+            "ping_time": ping_time,
+            "range_sample": np.arange(n_depth),
+        },
+        attrs={"processing_level": "Level 2A"},
+    )
+    ds_Sv["frequency_nominal"] = xr.DataArray(
+        [38000 + i * 82000 for i in range(n_channels)], dims=["channel"]
+    )
+    return ds_Sv
+
+
+@pytest.mark.unit
+def test_compute_MVBS_multidim_latlon():
+    """Regression: compute_MVBS must handle multi-dimensional lat/lon (channel, ping_time)."""
+    ds_Sv = _make_multidim_latlon_ds()
+    ds_MVBS = ep.commongrid.compute_MVBS(ds_Sv, range_meter_bin="20m", ping_time_bin="30s")
+
+    assert "Sv" in ds_MVBS
+    assert ds_MVBS["latitude"].dims == ("ping_time",)
+    assert ds_MVBS["longitude"].dims == ("ping_time",)
+    assert ds_MVBS["Sv"].ndim == 3
+    assert ds_MVBS.sizes["ping_time"] > 1
+
+
+@pytest.mark.unit
+def test_compute_NASC_multidim_latlon():
+    """Regression: compute_NASC must handle multi-dimensional lat/lon (channel, ping_time)."""
+    ds_Sv = _make_multidim_latlon_ds()
+    ds_Sv["depth"] = ds_Sv["echo_range"].copy()
+
+    ds_NASC = ep.commongrid.compute_NASC(ds_Sv, range_bin="20m", dist_bin="0.5nmi")
+
+    assert "NASC" in ds_NASC
+    assert ds_NASC["latitude"].dims == ("distance",)
+    assert ds_NASC["longitude"].dims == ("distance",)
+    assert ds_NASC["NASC"].ndim == 3
+    assert ds_NASC.sizes["distance"] > 1
+    assert np.all(np.isfinite(ds_NASC["latitude"].values))

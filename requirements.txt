@@ -2,7 +2,7 @@ aiohttp
 bottleneck
 dask[array,distributed]
 dask-image
-flox>=0.7.2
+flox>=0.9
 fsspec
 geopy
 jinja2
