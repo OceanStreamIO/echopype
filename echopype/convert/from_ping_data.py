@@ -214,6 +214,8 @@ class PingAccumulator:
         self._nav_heading: List[float] = []
         self._nav_speed: List[float] = []
         self._environment: Dict[str, Any] = {}
+        self._first_time: Optional[np.datetime64] = None
+        self._last_time: Optional[np.datetime64] = None
 
     # ------------------------------------------------------------------
     # Channel registration
@@ -309,6 +311,12 @@ class PingAccumulator:
             )
         )
 
+        # Track time bounds for O(1) duration_seconds
+        if self._first_time is None or timestamp < self._first_time:
+            self._first_time = timestamp
+        if self._last_time is None or timestamp > self._last_time:
+            self._last_time = timestamp
+
     def add_navigation(
         self,
         timestamp: datetime.datetime | np.datetime64,
@@ -353,15 +361,12 @@ class PingAccumulator:
 
     @property
     def duration_seconds(self) -> float:
-        """Time span of accumulated data in seconds."""
-        all_times = []
-        for pings in self._pings.values():
-            for p in pings:
-                all_times.append(p.timestamp)
-        if len(all_times) < 2:
+        """Time span of accumulated data in seconds (O(1))."""
+        if self._first_time is None or self._last_time is None:
             return 0.0
-        arr = np.array(all_times, dtype="datetime64[ns]")
-        return float((arr.max() - arr.min()) / np.timedelta64(1, "s"))
+        return float(
+            (self._last_time - self._first_time) / np.timedelta64(1, "s")
+        )
 
     @property
     def channel_ids(self) -> List[str]:
@@ -641,6 +646,8 @@ class PingAccumulator:
         self._nav_lon.clear()
         self._nav_heading.clear()
         self._nav_speed.clear()
+        self._first_time = None
+        self._last_time = None
 
 
 def from_ping_data(
