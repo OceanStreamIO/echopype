@@ -416,7 +416,10 @@ def compute_NASC(
     # Set ping time binning information
     ds_NASC["ping_time"] = (["distance"], raw_NASC["ping_time"].data, ds_Sv["ping_time"].attrs)
 
-    ds_NASC["frequency_nominal"] = ds_Sv["frequency_nominal"]  # re-attach frequency_nominal
+    # Drop ping_time coord from frequency_nominal to avoid MergeError
+    # (ping_time was reassigned as a data variable on the distance dim above)
+    _freq_nom = ds_Sv["frequency_nominal"].drop_vars("ping_time", errors="ignore")
+    ds_NASC["frequency_nominal"] = _freq_nom
 
     # Attach attributes
     _set_var_attrs(
