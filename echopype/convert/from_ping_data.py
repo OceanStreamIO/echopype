@@ -460,7 +460,10 @@ class PingAccumulator:
         parser = _MockParserEK80()
         parser.sonar_model = self.sonar_model
 
-        ch_ids_sorted = sorted(self.channels.keys())
+        # Only include channels that have at least one ping
+        ch_ids_sorted = sorted(
+            ch_id for ch_id in self.channels if self._pings.get(ch_id)
+        )
 
         # --- config_datagram ---
         first_ping_time = None
