@@ -141,7 +141,7 @@ class PingRecord:
 
     timestamp: np.datetime64
     channel_id: str
-    power_samples: NDArray[np.int16]  # raw int16 samples
+    power_samples: NDArray  # float32 dB or raw int16 samples
     angle_samples: Optional[NDArray[np.int16]] = None  # interleaved athwart/along
     transmit_power: float = 0.0
     pulse_duration: float = 0.001024
@@ -247,7 +247,7 @@ class PingAccumulator:
         self,
         timestamp: datetime.datetime | np.datetime64,
         channel_id: str,
-        power_samples: NDArray[np.int16] | Sequence[int],
+        power_samples: NDArray | Sequence[int] | Sequence[float],
         *,
         angle_samples: Optional[NDArray[np.int16] | Sequence[int]] = None,
         transmit_power: float = 0.0,
@@ -293,7 +293,12 @@ class PingAccumulator:
         elif not isinstance(timestamp, np.datetime64):
             timestamp = np.datetime64(timestamp, "ns")
 
-        power = np.asarray(power_samples, dtype=np.int16)
+        # Accept float32/float64 (dB values) or int16 (raw counts)
+        power = np.asarray(power_samples)
+        if power.dtype.kind == "f":
+            power = power.astype(np.float32)
+        else:
+            power = power.astype(np.int16)
         angles = np.asarray(angle_samples, dtype=np.int16) if angle_samples is not None else None
 
         self._pings[channel_id].append(
