@@ -1,7 +1,7 @@
 """Construct EchoData from in-memory ping data arrays.
 
 Provides :class:`PingAccumulator` for buffering decoded SampleData pings
-from a real-time UDP stream (e.g. ``ek80_udp_client``) and
+from a real-time UDP stream (e.g. ``ek80_client``) and
 :func:`from_ping_data` for one-shot EchoData construction.
 
 This module bridges the gap between echopype's file-based conversion
@@ -190,7 +190,7 @@ class PingAccumulator:
     """Buffer decoded pings and convert to ``EchoData`` for processing.
 
     Designed for real-time UDP data acquisition where pings arrive one at a
-    time from ``ek80_udp_client``.
+    time from ``ek80_client``.
 
     Parameters
     ----------
