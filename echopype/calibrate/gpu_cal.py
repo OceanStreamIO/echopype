@@ -99,27 +99,29 @@ def _prx_from_complex(xp, bs_r, bs_i, z_et, z_er, n_beams):
     # Mean across beams — avoid xp.mean(axis=-1) which triggers a slow
     # generic reduction kernel in CuPy.  Instead, transpose to beam-first
     # layout (contiguous 2D slices) and accumulate with element-wise ops.
+    # Sectors without data (single-beam channel NaN-padded next to split-beam
+    # channels) are skipped, and the sector count is taken per sample.
     nb = bs_r.shape[-1]
-    if nb == 1:
-        mean_r = bs_r[..., 0]
-        mean_i = bs_i[..., 0]
-    else:
-        br_T = xp.ascontiguousarray(bs_r.transpose(2, 0, 1))  # (beams, pings, range)
-        bi_T = xp.ascontiguousarray(bs_i.transpose(2, 0, 1))
-        sum_r = br_T[0].copy()
-        sum_i = bi_T[0].copy()
-        for b in range(1, nb):
-            sum_r += br_T[b]
-            sum_i += bi_T[b]
-        mean_r = sum_r / nb
-        mean_i = sum_i / nb
+    br_T = xp.ascontiguousarray(bs_r.transpose(2, 0, 1))  # (beams, pings, range)
+    bi_T = xp.ascontiguousarray(bs_i.transpose(2, 0, 1))
+    sum_r = xp.zeros(br_T.shape[1:], dtype=br_T.dtype)
+    sum_i = xp.zeros(bi_T.shape[1:], dtype=bi_T.dtype)
+    n_valid = xp.zeros(br_T.shape[1:], dtype=br_T.dtype)
+    for b in range(nb):
+        valid = ~xp.isnan(br_T[b])
+        sum_r += xp.where(valid, br_T[b], 0)
+        sum_i += xp.where(valid, bi_T[b], 0)
+        n_valid += valid
+    n_valid = xp.where(n_valid > 0, n_valid, xp.nan)
+    mean_r = sum_r / n_valid
+    mean_i = sum_i / n_valid
 
     # |mean|^2
     abs_sq = mean_r ** 2 + mean_i ** 2
 
-    # Power: n_beams * |mean(bs)|^2 / (2√2)^2 * (|z_er+z_et|/z_er)^2 / z_et
+    # Power: n_sectors * |mean(bs)|^2 / (2√2)^2 * (|z_er+z_et|/z_er)^2 / z_et
     impedance_fac = (abs(z_er + z_et) / z_er) ** 2 / z_et
-    prx = n_beams * abs_sq / 8.0 * impedance_fac
+    prx = n_valid * abs_sq / 8.0 * impedance_fac
 
     return prx
 

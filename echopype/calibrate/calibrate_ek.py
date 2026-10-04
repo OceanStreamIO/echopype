@@ -429,8 +429,11 @@ class CalibrateEK80(CalibrateEK):
         """
 
         def _get_prx(sig):
+            # Count sectors that actually carry data: a single-beam channel stored
+            # alongside split-beam channels is NaN-padded along the beam dimension
+            n_sector = sig.notnull().sum(dim="beam")
             return (
-                beam["beam"].size  # number of transducer sectors
+                n_sector  # number of transducer sectors
                 * np.abs(sig.mean(dim="beam")) ** 2
                 / (2 * np.sqrt(2)) ** 2
                 * (np.abs(z_er + z_et) / z_er) ** 2
