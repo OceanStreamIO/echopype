@@ -19,6 +19,30 @@ from .ek80_complex import (
 from .env_params import get_env_params_EK
 from .range import compute_range_EK, range_mod_TVG_EK
 
+# transmit_type values that mean the channel did not transmit in that ping
+_NO_TRANSMIT_TYPE = ("", "nan", "None")
+
+
+def _first_valid_transmit_type(transmit_type: xr.DataArray) -> xr.DataArray:
+    """
+    Each channel's transmit type, taken from the first ping in which it transmitted.
+
+    Multiplexed channels ping in turn, so at the pings of the other channels a channel
+    holds NaN (stored as the string "nan") instead of a transmit type. Channels that
+    never transmitted get None.
+    """
+    values = np.asarray(transmit_type.transpose("channel", "ping_time").values, dtype=object)
+    valid = np.vectorize(
+        lambda v: isinstance(v, str) and v not in _NO_TRANSMIT_TYPE, otypes=[bool]
+    )(values)
+    first = values[np.arange(values.shape[0]), valid.argmax(axis=1)]
+    return xr.DataArray(
+        np.where(valid.any(axis=1), first, None).astype(object),
+        coords={"channel": transmit_type["channel"].values},
+        dims=["channel"],
+    )
+
+
 logger = _init_logger(__name__)
 
 
@@ -314,21 +338,25 @@ class CalibrateEK80(CalibrateEK):
         # Use center frequency for each ping to select BB or CW channels
         # when all samples are encoded as complex samples
         if not np.all(beam["transmit_type"] == "CW"):
-            # At least 1 BB ping exists -- this is analogous to what we had from before
-            # Before: when at least 1 BB ping exists, frequency_start and frequency_end will exist
+            # Either at least 1 BB ping exists, or the channels are multiplexed:
+            # each channel has no transmit_type at the pings of the other channels.
 
-            # assume transmit_type identical for all pings in a channel
-            first_ping_transmit_type = (
-                beam["transmit_type"].isel(ping_time=0).drop_vars("ping_time")
-            ).compute()  # noqa
+            # assume transmit_type identical for all pings in a channel, and read it
+            # from the first ping in which the channel transmitted
+            channel_transmit_type = _first_valid_transmit_type(beam["transmit_type"])
+            transmitted = channel_transmit_type.notnull()
+            if np.all(channel_transmit_type.where(transmitted, drop=True) == "CW"):
+                # All channels are CW and the gaps are multiplexing
+                cw = channel_transmit_type.where(transmitted, drop=True)
+                return {"BB": None, "CW": cw.channel}
             return {
                 # For BB: Keep only non-CW channels (LFM or FMD) based on transmit_type
-                "BB": first_ping_transmit_type.where(
-                    first_ping_transmit_type != "CW", drop=True
+                "BB": channel_transmit_type.where(
+                    transmitted & (channel_transmit_type != "CW"), drop=True
                 ).channel,  # noqa
                 # For CW: Keep only CW channels based on transmit_type
-                "CW": first_ping_transmit_type.where(
-                    first_ping_transmit_type == "CW", drop=True
+                "CW": channel_transmit_type.where(
+                    channel_transmit_type == "CW", drop=True
                 ).channel,  # noqa
             }
         else:

@@ -461,3 +461,62 @@ def test_ek80_BB_complex_multiplex_NaNs_and_non_NaNs(raw_data_path, target_chann
         target_channel_ping_pattern,
         equal_nan=True
     )
+
+
+def _transmit_type_beam(rows):
+    """A beam group holding only transmit_type, one row of pings per channel."""
+    rows = np.array(rows, dtype=object)
+    return xr.Dataset(
+        {"transmit_type": (("channel", "ping_time"), rows)},
+        coords={
+            "channel": [f"ch{i}" for i in range(rows.shape[0])],
+            "ping_time": pd.date_range("2022-06-27", periods=rows.shape[1], freq="8s"),
+        },
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("rows", "expected_cw", "expected_bb"),
+    [
+        # Every channel transmits in every ping: behaviour unchanged
+        ([["CW", "CW"], ["CW", "CW"]], ["ch0", "ch1"], None),
+        ([["CW", "CW"], ["LFM", "LFM"]], ["ch0"], ["ch1"]),
+        # Multiplexed CW channels, each NaN at the other channels' pings.
+        # Reading only the first ping kept ch0 alone.
+        (
+            [["CW", "nan", "nan"], ["nan", "CW", "nan"], ["nan", "nan", "CW"]],
+            ["ch0", "ch1", "ch2"],
+            None,
+        ),
+        # Multiplexed CW and FM channels
+        (
+            [["nan", "CW", "nan"], ["LFM", "nan", "nan"], ["nan", "nan", "CW"]],
+            ["ch0", "ch2"],
+            ["ch1"],
+        ),
+        # Missing transmit types stored as float NaN
+        ([[np.nan, "CW"], ["CW", np.nan]], ["ch0", "ch1"], None),
+        # A channel that never transmitted is in neither list
+        ([["CW", "nan"], ["nan", "nan"], ["nan", "LFM"]], ["ch0"], ["ch2"]),
+    ],
+)
+def test_ek80_get_chan_dict_multiplexed(rows, expected_cw, expected_bb):
+    from echopype.calibrate.calibrate_ek import CalibrateEK80
+
+    chan_dict = CalibrateEK80._get_chan_dict(_transmit_type_beam(rows))
+    assert chan_dict["CW"].values.tolist() == expected_cw
+    if expected_bb is None:
+        assert chan_dict["BB"] is None
+    else:
+        assert chan_dict["BB"].values.tolist() == expected_bb
+
+
+@pytest.mark.unit
+def test_ek80_get_chan_dict_multiplexed_lazy():
+    from echopype.calibrate.calibrate_ek import CalibrateEK80
+
+    beam = _transmit_type_beam(
+        [["CW", "nan", "nan", "CW"], ["nan", "CW", "nan", "nan"], ["nan", "nan", "CW", "nan"]]
+    ).chunk({"ping_time": 1})
+    assert CalibrateEK80._get_chan_dict(beam)["CW"].values.tolist() == ["ch0", "ch1", "ch2"]
